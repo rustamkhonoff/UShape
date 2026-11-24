@@ -1,0 +1,8 @@
+{
+  "name": "com.rustamkhonoff.ushape",
+  "version": "0.3.0",
+  "displayName": "UShape",
+  "description": "Rounded uGUI panels with gradients, borders, outlines and shadows.",
+  "unity": "2022.3",
+  "dependencies": { "com.unity.ugui": "1.0.0" }
+}

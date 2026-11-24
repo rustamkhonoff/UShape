@@ -1,0 +1,118 @@
+.ushape-inspector {
+    padding: 4px 2px 2px 2px;
+}
+
+.ushape-dark {
+    --shape-rail: rgb(39, 40, 45);
+    --shape-rail-border: rgb(62, 64, 72);
+    --shape-selected: rgb(59, 65, 81);
+    --shape-selected-border: rgb(77, 89, 115);
+    --shape-accent: rgb(141, 174, 250);
+    --shape-text: rgb(183, 188, 200);
+    --shape-active-text: rgb(243, 246, 255);
+    --shape-hover: rgba(156, 176, 216, 0.10);
+    --shape-pane: rgba(12, 14, 20, 0.12);
+    --shape-pane-border: rgba(255, 255, 255, 0.09);
+}
+
+.ushape-light {
+    --shape-rail: rgb(194, 198, 208);
+    --shape-rail-border: rgb(167, 173, 187);
+    --shape-selected: rgb(229, 235, 250);
+    --shape-selected-border: rgb(163, 179, 214);
+    --shape-accent: rgb(62, 91, 174);
+    --shape-text: rgb(61, 67, 83);
+    --shape-active-text: rgb(34, 49, 89);
+    --shape-hover: rgba(53, 76, 131, 0.10);
+    --shape-pane: rgba(255, 255, 255, 0.16);
+    --shape-pane-border: rgba(41, 51, 76, 0.18);
+}
+
+.ushape-tabs {
+    position: relative;
+    flex-direction: row;
+    height: 34px;
+    padding: 3px;
+    background-color: var(--shape-rail);
+    border-width: 1px;
+    border-color: var(--shape-rail-border);
+    border-radius: 8px;
+}
+
+.ushape-tab-rail {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    top: 4px;
+    bottom: 4px;
+}
+
+.ushape-tab-indicator {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 33.3333%;
+    background-color: var(--shape-selected);
+    border-width: 1px;
+    border-color: var(--shape-selected-border);
+    border-bottom-color: var(--shape-accent);
+    border-radius: 5px;
+    translate: 0% 0;
+    transition-property: translate;
+    transition-duration: 0.22s;
+    transition-timing-function: ease-out-cubic;
+}
+
+.ushape-tab {
+    flex-grow: 1;
+    flex-basis: 0;
+    min-width: 0;
+    margin: 0;
+    padding: 0 3px;
+    border-width: 1px;
+    border-color: transparent;
+    border-radius: 5px;
+    background-color: transparent;
+    color: var(--shape-text);
+    -unity-font-style: bold;
+    transition-property: background-color, color;
+    transition-duration: 0.14s, 0.14s;
+}
+
+.ushape-tab:hover {
+    background-color: var(--shape-hover);
+}
+
+.ushape-tab:focus {
+    border-color: var(--shape-accent);
+}
+
+.ushape-tab--active {
+    color: var(--shape-active-text);
+}
+
+.ushape-pane {
+    margin-top: 6px;
+    padding: 2px 7px 7px 7px;
+    background-color: var(--shape-pane);
+    border-width: 1px;
+    border-color: var(--shape-pane-border);
+    border-radius: 7px;
+    opacity: 1;
+    translate: 0 0;
+    transition-property: opacity, translate;
+    transition-duration: 0.17s, 0.17s;
+    transition-timing-function: ease-out-cubic;
+}
+
+.ushape-pane--leaving {
+    opacity: 0;
+    translate: 0 3px;
+    transition-duration: 0.075s, 0.075s;
+    transition-timing-function: ease-in;
+}
+
+.ushape-interaction {
+    margin-top: 5px;
+}
