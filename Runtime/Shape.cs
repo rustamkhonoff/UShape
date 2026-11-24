@@ -39,6 +39,21 @@ namespace RustamKhonoff.UShape
         public PanelShadow innerShadow = new PanelShadow();
         [SerializeField] private List<PanelShadow> extraOuterShadows;
         [SerializeField] private List<PanelShadow> extraInnerShadows;
+        [SerializeField, Min(0), Tooltip("Seconds to settle near a new style target in Play Mode. Zero applies changes immediately.")]
+        private float styleTransitionDuration;
+
+        /// <summary>Seconds to settle to a new continuous style target. Zero disables smoothing.</summary>
+        public float StyleTransitionDuration
+        {
+            get => styleTransitionDuration;
+            set
+            {
+                float duration = Mathf.Max(0, value);
+                if (!StyleValue.Set(ref styleTransitionDuration, duration) || transition?.IsRunning != true) return;
+                if (duration == 0) Refresh();
+                else QueueStyleUpdate(false);
+            }
+        }
 
         public Color BaseColor { get => color; set => color = value; }
         public Vector4 CornerRadii { get => cornerRadii; set => SetVisual(ref cornerRadii, value); }
@@ -82,6 +97,12 @@ namespace RustamKhonoff.UShape
         private List<IPanelStyle> observed;
         private Action<bool> styleChanged;
         private Vector4 meshPadding;
+        private bool hasWrittenStyle;
+        private StyleTransition transition;
+        private Vector4 effectPadding;
+        private Vector4 pointerPadding;
+        private Vector4 heldEffects;
+        private Vector4 heldPointer;
 
         public override Material defaultMaterial => atlas != null ? atlas.Material : base.defaultMaterial;
         public override Texture mainTexture => atlas != null ? atlas.Ramps : Texture2D.whiteTexture;
@@ -102,6 +123,9 @@ namespace RustamKhonoff.UShape
         {
             base.OnDisable();
             PanelAtlas.CancelStyle(this);
+            PanelAtlas.StopTransition(this);
+            transition?.Cancel();
+            hasWrittenStyle = false;
             if (observed != null)
             {
                 foreach (var style in observed) style.Changed -= styleChanged;
@@ -201,31 +225,99 @@ namespace RustamKhonoff.UShape
             if (atlas != null) PanelAtlas.QueueStyle(this);
         }
 
-        /// <summary>Refreshes after direct edits to legacy fields or mutable gradient data.</summary>
+        /// <summary>Applies the target style immediately, including edits to legacy fields.</summary>
         public void Refresh()
         {
             styleDirty = true;
             paddingDirty = true;
             observersNeedSync = true;
-            FlushStyleUpdates();
+            if (atlas == null) return;
+
+            WriteStyle(false, 0d);
+            ApplyPaddingUpdate();
         }
 
-        internal void FlushStyleUpdates()
+        internal void FlushStyleUpdates(double now)
         {
             if (atlas == null) return;
-            if (styleDirty) WriteStyle();
-            if (!paddingDirty) return;
-
-            paddingDirty = false;
-            if (!meshPadding.Equals(GetPadding())) SetVerticesDirty();
+            if (styleDirty) WriteStyle(true, now);
+            ApplyPaddingUpdate();
         }
 
-        private void WriteStyle()
+        internal void AdvanceStyleTransition(double now)
+        {
+            if (atlas == null || transition?.IsRunning != true)
+            {
+                PanelAtlas.StopTransition(this);
+                return;
+            }
+
+            if (styleTransitionDuration <= 0 || !Application.isPlaying)
+            {
+                Refresh();
+                return;
+            }
+            if (atlas.AdvanceStyle(slot, transition, now)) return;
+
+            PanelAtlas.StopTransition(this);
+            atlas.WriteStyle(slot, this);
+            paddingDirty = true;
+            ApplyPaddingUpdate();
+        }
+
+        private void ApplyPaddingUpdate()
+        {
+            if (!paddingDirty) return;
+            paddingDirty = false;
+            if (!meshPadding.Equals(GetRenderPadding())) SetVerticesDirty();
+        }
+
+        private void WriteStyle(bool allowTransition, double now)
         {
             if (observersNeedSync) SyncObservedStyles();
-            atlas.WriteStyle(slot, this);
+            var nextEffects = paddingDirty || !hasWrittenStyle ? GetEffectPadding() : effectPadding;
+            var nextPointer = paddingDirty || !hasWrittenStyle ? GetPointerPadding() : pointerPadding;
+            bool wasRunning = transition?.IsRunning == true;
+            bool canTransition = allowTransition && hasWrittenStyle && styleTransitionDuration > 0 && Application.isPlaying;
+            if (canTransition)
+            {
+                transition ??= new StyleTransition();
+                if (atlas.RetargetStyle(slot, this, transition, now, styleTransitionDuration))
+                {
+                    // Reserve both endpoint extents. Shrinking can wait until the tween ends.
+                    heldEffects = MaxPadding(wasRunning ? heldEffects : effectPadding, nextEffects);
+                    heldPointer = MaxPadding(wasRunning ? heldPointer : pointerPadding, nextPointer);
+                    PanelAtlas.TrackTransition(this);
+                }
+                else
+                {
+                    PanelAtlas.StopTransition(this);
+                    paddingDirty |= wasRunning;
+                }
+            }
+            else
+            {
+                if (wasRunning)
+                {
+                    PanelAtlas.StopTransition(this);
+                    transition.Cancel();
+                    paddingDirty = true;
+                }
+                atlas.WriteStyle(slot, this);
+            }
+
+            effectPadding = nextEffects;
+            pointerPadding = nextPointer;
+            hasWrittenStyle = true;
             styleDirty = false;
         }
+
+        private Vector4 GetRenderPadding() => transition?.IsRunning == true
+            ? heldEffects + heldPointer
+            : effectPadding + pointerPadding;
+
+        private static Vector4 MaxPadding(Vector4 a, Vector4 b) =>
+            new Vector4(Mathf.Max(a.x, b.x), Mathf.Max(a.y, b.y), Mathf.Max(a.z, b.z), Mathf.Max(a.w, b.w));
 
         private void SyncObservedStyles()
         {
@@ -281,21 +373,24 @@ namespace RustamKhonoff.UShape
             Refresh();
         }
 
-        private Vector4 GetPadding()
+        private Vector4 GetPointerPadding()
+        {
+            var shape = Vector4.zero;
+            if (!pointer.IsVisible) return shape;
+
+            switch (pointer.side)
+            {
+                case PointerSide.Left: shape.x = pointer.height; break;
+                case PointerSide.Right: shape.y = pointer.height; break;
+                case PointerSide.Bottom: shape.z = pointer.height; break;
+                case PointerSide.Top: shape.w = pointer.height; break;
+            }
+            return shape;
+        }
+
+        private Vector4 GetEffectPadding()
         {
             float outline = Mathf.Max(0, outlineWidth) + 2;
-            var shape = Vector4.zero;
-            if (pointer.IsVisible)
-            {
-                switch (pointer.side)
-                {
-                    case PointerSide.Left: shape.x = pointer.height; break;
-                    case PointerSide.Right: shape.y = pointer.height; break;
-                    case PointerSide.Bottom: shape.z = pointer.height; break;
-                    case PointerSide.Top: shape.w = pointer.height; break;
-                }
-            }
-
             var padding = Vector4.one * outline;
             ExpandForShadow(ref padding, outerShadow);
             if (extraOuterShadows != null)
@@ -303,7 +398,7 @@ namespace RustamKhonoff.UShape
                 int limit = Mathf.Min(extraOuterShadows.Count, MaxShadowsPerType - 1);
                 for (int i = 0; i < limit; i++) ExpandForShadow(ref padding, extraOuterShadows[i]);
             }
-            return padding + shape;
+            return padding;
         }
 
         private static void ExpandForShadow(ref Vector4 padding, PanelShadow layer)
@@ -322,11 +417,11 @@ namespace RustamKhonoff.UShape
         {
             vh.Clear();
             if (atlas == null) return;
-            if (styleDirty) WriteStyle();
+            if (styleDirty) WriteStyle(true, Time.unscaledTimeAsDouble);
 
             Rect r = GetPixelAdjustedRect();
             if (r.width <= 0 || r.height <= 0) return;
-            meshPadding = GetPadding();
+            meshPadding = GetRenderPadding();
             paddingDirty = false;
             var instance = new Vector4(slot, r.width * .5f, r.height * .5f, 0);
             float left = meshPadding.x, right = meshPadding.y, bottom = meshPadding.z, top = meshPadding.w;
@@ -351,6 +446,7 @@ namespace RustamKhonoff.UShape
         protected override void OnValidate()
         {
             styleDirty = true;
+            paddingDirty = true;
             observersNeedSync = true;
             base.OnValidate();
         }

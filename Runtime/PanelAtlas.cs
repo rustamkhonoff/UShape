@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
@@ -8,7 +9,7 @@ namespace RustamKhonoff.UShape
     internal sealed class PanelAtlas
     {
         private const int Capacity = 64;
-        private const int StyleWidth = 32;
+        private const int StyleWidth = StyleTransition.RowWidth;
         private const int OuterShadowStart = 11;
         private const int InnerShadowStart = OuterShadowStart + Shape.MaxShadowsPerType * 2;
         private const int RampWidth = 256;
@@ -23,6 +24,8 @@ namespace RustamKhonoff.UShape
         private static HashSet<Shape> pendingStyles = new HashSet<Shape>();
         private static HashSet<Shape> processingStyles = new HashSet<Shape>();
         private static bool flushingStyles;
+        private static readonly HashSet<Shape> transitions = new HashSet<Shape>();
+        private static readonly List<Shape> advancing = new List<Shape>();
         private static Shader shader;
 
         private readonly Stack<int> freeSlots = new Stack<int>(Capacity);
@@ -101,10 +104,12 @@ namespace RustamKhonoff.UShape
 
         public static void QueueStyle(Shape element) => pendingStyles.Add(element);
         public static void CancelStyle(Shape element) => pendingStyles.Remove(element);
+        public static void TrackTransition(Shape element) => transitions.Add(element);
+        public static void StopTransition(Shape element) => transitions.Remove(element);
 
         private static void FlushStyles()
         {
-            if (flushingStyles || pendingStyles.Count == 0) return;
+            if (flushingStyles || (pendingStyles.Count == 0 && transitions.Count == 0)) return;
             // Padding changes must reach Graphic before the canvas rebuilds. A dirty callback
             // can schedule another element, so flush a separate set.
             var batch = pendingStyles;
@@ -113,20 +118,52 @@ namespace RustamKhonoff.UShape
             flushingStyles = true;
             try
             {
+                double now = Time.unscaledTimeAsDouble;
                 foreach (var element in batch)
-                    if (element) element.FlushStyleUpdates();
+                    if (element) element.FlushStyleUpdates(now);
+
+                // Callbacks from a geometry update may start or stop another shape.
+                advancing.AddRange(transitions);
+                foreach (var element in advancing)
+                    if (element && transitions.Contains(element)) element.AdvanceStyleTransition(now);
             }
             finally
             {
                 batch.Clear();
+                advancing.Clear();
                 flushingStyles = false;
             }
         }
 
         public void WriteStyle(int slot, Shape element)
         {
-            var data = styles.GetRawTextureData<Color>();
-            int start = slot * StyleWidth;
+            WriteTargets(element, slot, new StyleRow(this, slot));
+            QueueUpload();
+        }
+
+        public bool RetargetStyle(int slot, Shape element, StyleTransition transition, double now, float duration)
+        {
+            Array.Clear(transition.Target, 0, transition.Target.Length);
+            WriteTargets(element, slot, new StyleRow(this, slot, transition.Target));
+            stylesDirty |= transition.Retarget(styles.GetRawTextureData<Color>(), slot * StyleWidth, now, duration);
+            QueueUpload();
+            return transition.IsRunning;
+        }
+
+        public bool AdvanceStyle(int slot, StyleTransition transition, double now)
+        {
+            stylesDirty |= transition.Step(styles.GetRawTextureData<Color>(), slot * StyleWidth, now);
+            QueueUpload();
+            return transition.IsRunning;
+        }
+
+        private void QueueUpload()
+        {
+            if (stylesDirty || rampsDirty) DirtyPages.Add(this);
+        }
+
+        private void WriteTargets(Shape element, int slot, StyleRow row)
+        {
             var r = element.cornerRadii;
             var radii = new Color(Mathf.Max(0, r.x), Mathf.Max(0, r.y), Mathf.Max(0, r.z), Mathf.Max(0, r.w));
             var fillGradient = GetGradient(element.fill);
@@ -136,74 +173,98 @@ namespace RustamKhonoff.UShape
                 | (hasPointer ? 16 : 0);
 
             // Four bits per stroke: two for pattern, two for motion.
-            flags |= EncodeStroke(element.borderWidth, element.borderStroke, data, start + BorderStrokeEntry) << 5;
-            flags |= EncodeStroke(element.outlineWidth, element.outlineStroke, data, start + OutlineStrokeEntry) << 9;
+            flags |= EncodeStroke(element.borderWidth, element.borderStroke, row, BorderStrokeEntry) << 5;
+            flags |= EncodeStroke(element.outlineWidth, element.outlineStroke, row, OutlineStrokeEntry) << 9;
 
-            int outerCount = WriteShadows(data, start + OuterShadowStart, element.outerShadow, element.GetExtraShadows(true), false, out _);
-            int innerCount = WriteShadows(data, start + InnerShadowStart, element.innerShadow, element.GetExtraShadows(false), true, out Vector2 innerReach);
+            int outerCount = WriteShadows(row, OuterShadowStart, element.outerShadow, element.GetExtraShadows(true), false, out _);
+            int innerCount = WriteShadows(row, InnerShadowStart, element.innerShadow, element.GetExtraShadows(false), true, out Vector2 innerReach);
             if (innerCount > 0)
-                SetStyle(data, start + InnerReachEntry, new Color(innerReach.x, innerReach.y, 0, 0));
+                row.Set(InnerReachEntry, new Color(innerReach.x, innerReach.y, 0, 0));
 
             if (hasPointer)
             {
                 var pointer = element.pointer;
-                SetStyle(data, start + PointerEntry, new Color((float)pointer.side, Mathf.Clamp01(pointer.position), pointer.width, pointer.height));
+                row.Set(PointerEntry, new Color((float)pointer.side, Mathf.Clamp01(pointer.position), pointer.width, pointer.height));
             }
             // Each count fits in three bits. The shader only visits enabled and visible layers.
             int shadowCounts = outerCount | (innerCount << 3);
 
-            SetStyle(data, start, radii);
-            SetStyle(data, start + 1, new Color(Mathf.Max(0, element.borderWidth), Mathf.Max(0, element.outlineWidth), flags, shadowCounts));
-            WritePaint(data, start + 2, slot, 0, element.fill, fillGradient);
-            WritePaint(data, start + 5, slot, 1, element.border, GetGradient(element.border));
-            WritePaint(data, start + 8, slot, 2, element.outline, GetGradient(element.outline));
-            if (stylesDirty || rampsDirty) DirtyPages.Add(this);
+            row.Set(0, radii);
+            row.Set(1, new Color(Mathf.Max(0, element.borderWidth), Mathf.Max(0, element.outlineWidth), flags, shadowCounts));
+            WritePaint(row, 2, slot, 0, element.fill, fillGradient);
+            WritePaint(row, 5, slot, 1, element.border, GetGradient(element.border));
+            WritePaint(row, 8, slot, 2, element.outline, GetGradient(element.outline));
         }
 
-        private int EncodeStroke(float width, PanelStroke stroke, NativeArray<Color> data, int entry)
+        private static int EncodeStroke(float width, PanelStroke stroke, StyleRow row, int entry)
         {
-            if (width <= 0) return 0;
+            if (width <= 0 && !row.IsTransitionTarget) return 0;
             var motion = stroke.motion == StrokeMotion.March && stroke.pattern == StrokePattern.Solid
                 ? StrokeMotion.None
                 : stroke.motion;
             int mode = (int)stroke.pattern | ((int)motion << 2);
             if (mode != 0)
-                SetStyle(data, entry, new Color(Mathf.Max(.1f, stroke.dashLength), Mathf.Max(0, stroke.gap), stroke.phase, stroke.speed));
+                row.Set(entry, new Color(Mathf.Max(.1f, stroke.dashLength), Mathf.Max(0, stroke.gap), stroke.phase, stroke.speed));
             return mode;
         }
 
         private static Gradient GetGradient(PanelPaint paint) =>
             paint != null && paint.type != GradientType.Solid ? paint.gradient : null;
 
-        private void SetStyle(NativeArray<Color> data, int offset, Color value)
+        private readonly struct StyleRow
         {
-            if (data[offset].Equals(value)) return;
-            data[offset] = value;
-            stylesDirty = true;
+            private readonly PanelAtlas atlas;
+            private readonly NativeArray<Color> data;
+            private readonly int start;
+            private readonly Color[] target;
+
+            public bool IsTransitionTarget => target != null;
+
+            public StyleRow(PanelAtlas atlas, int slot, Color[] target = null)
+            {
+                this.atlas = atlas;
+                data = target == null ? atlas.styles.GetRawTextureData<Color>() : default;
+                start = slot * StyleWidth;
+                this.target = target;
+            }
+
+            public void Set(int entry, Color value)
+            {
+                if (target != null)
+                {
+                    target[entry] = value;
+                    return;
+                }
+                int index = start + entry;
+                if (data[index].Equals(value)) return;
+                var writable = data;
+                writable[index] = value;
+                atlas.stylesDirty = true;
+            }
         }
 
-        private void WritePaint(NativeArray<Color> data, int index, int slot, int layer,
+        private void WritePaint(StyleRow row, int index, int slot, int layer,
             PanelPaint paint, Gradient gradient)
         {
-            SetStyle(data, index, ToWorkingColorSpace(paint?.color ?? Color.white));
+            row.Set(index, ToWorkingColorSpace(paint?.color ?? Color.white));
             if (gradient == null)
             {
-                SetStyle(data, index + 1, Color.clear);
+                row.Set(index + 1, Color.clear);
                 return;
             }
 
             float angle = paint.angle * Mathf.Deg2Rad;
             float type = (float)paint.type + (gradient.mode == GradientMode.Fixed ? 8 : 0);
-            SetStyle(data, index + 1, new Color(type, Mathf.Cos(angle), Mathf.Sin(angle), paint.offset));
-            SetStyle(data, index + 2, new Color(paint.center.x, paint.center.y,
+            row.Set(index + 1, new Color(type, Mathf.Cos(angle), Mathf.Sin(angle), paint.offset));
+            row.Set(index + 2, new Color(paint.center.x, paint.center.y,
                 Mathf.Max(.001f, Mathf.Abs(paint.scale.x)), Mathf.Max(.001f, Mathf.Abs(paint.scale.y))));
 
-            int row = slot * PaintCount + layer;
-            var snapshot = rampSnapshots[row];
+            int rampRow = slot * PaintCount + layer;
+            var snapshot = rampSnapshots[rampRow];
             if (snapshot != null && snapshot.Equals(gradient)) return;
 
             var pixels = ramps.GetRawTextureData<Color32>();
-            int firstPixel = row * RampWidth;
+            int firstPixel = rampRow * RampWidth;
             bool linearKeys = gradient.colorSpace == ColorSpace.Linear;
             for (int x = 0; x < RampWidth; x++)
             {
@@ -212,21 +273,21 @@ namespace RustamKhonoff.UShape
                 pixels[firstPixel + x] = linearKeys ? value.gamma : value;
             }
 
-            if (snapshot == null) rampSnapshots[row] = snapshot = new Gradient();
+            if (snapshot == null) rampSnapshots[rampRow] = snapshot = new Gradient();
             snapshot.SetKeys(gradient.colorKeys, gradient.alphaKeys);
             snapshot.mode = gradient.mode;
             snapshot.colorSpace = gradient.colorSpace;
             rampsDirty = true;
         }
 
-        private int WriteShadows(NativeArray<Color> data, int start, PanelShadow first, IReadOnlyList<PanelShadow> extra,
+        private int WriteShadows(StyleRow row, int start, PanelShadow first, IReadOnlyList<PanelShadow> extra,
             bool trackInnerReach, out Vector2 reach)
         {
             int count = 0;
             reach = Vector2.zero;
             if (Shape.HasShadow(first))
             {
-                WriteShadow(data, start, first);
+                WriteShadow(row, start, first);
                 if (trackInnerReach) IncludeInnerReach(ref reach, first);
                 count++;
             }
@@ -238,7 +299,7 @@ namespace RustamKhonoff.UShape
             {
                 var layer = extra[i];
                 if (!Shape.HasShadow(layer)) continue;
-                WriteShadow(data, start + count * 2, layer);
+                WriteShadow(row, start + count * 2, layer);
                 if (trackInnerReach) IncludeInnerReach(ref reach, layer);
                 count++;
             }
@@ -252,10 +313,10 @@ namespace RustamKhonoff.UShape
             reach.y = Mathf.Max(reach.y, Mathf.Abs(shadow.offset.y) + softnessAndSpread);
         }
 
-        private void WriteShadow(NativeArray<Color> data, int index, PanelShadow shadow)
+        private void WriteShadow(StyleRow row, int index, PanelShadow shadow)
         {
-            SetStyle(data, index, ToWorkingColorSpace(shadow.color));
-            SetStyle(data, index + 1, new Color(shadow.offset.x, shadow.offset.y, Mathf.Max(0, shadow.blur), shadow.spread));
+            row.Set(index, ToWorkingColorSpace(shadow.color));
+            row.Set(index + 1, new Color(shadow.offset.x, shadow.offset.y, Mathf.Max(0, shadow.blur), shadow.spread));
         }
 
         private static Color ToWorkingColorSpace(Color color) =>
@@ -273,10 +334,10 @@ namespace RustamKhonoff.UShape
             DirtyPages.Clear();
         }
 
-        private static void DestroyResource(Object resource)
+        private static void DestroyResource(UnityEngine.Object resource)
         {
-            if (Application.isPlaying) Object.Destroy(resource);
-            else Object.DestroyImmediate(resource);
+            if (Application.isPlaying) UnityEngine.Object.Destroy(resource);
+            else UnityEngine.Object.DestroyImmediate(resource);
         }
     }
 }

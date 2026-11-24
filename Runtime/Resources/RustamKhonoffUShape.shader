@@ -146,8 +146,8 @@ Shader "RustamKhonoff/UShape"
                 o.effects = style(slot, 1.);
                 o.fill = style(slot, 2.);
                 uint flags = (uint)o.effects.z;
-                o.borderStroke = animatedStroke(slot, 29., (flags >> 5u) & 15u);
-                o.outlineStroke = animatedStroke(slot, 30., (flags >> 9u) & 15u);
+                o.borderStroke = animatedStroke(slot, 29., o.effects.x > 0. ? (flags >> 5u) & 15u : 0u);
+                o.outlineStroke = animatedStroke(slot, 30., o.effects.y > 0. ? (flags >> 9u) & 15u : 0u);
                 o.fillSpec = 0;
                 UNITY_BRANCH
                 if ((flags & 4u) != 0u)

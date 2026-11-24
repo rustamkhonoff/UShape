@@ -174,6 +174,8 @@ namespace RustamKhonoff.UShape.Editor
             DrawSection("Fill");
             EditorGUILayout.PropertyField(serializedObject.FindProperty("m_Color"), BaseColor);
             DrawPaint(serializedObject.FindProperty("fill"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("styleTransitionDuration"),
+                new GUIContent("Style Transition (s)", "Smooths runtime property changes. New targets continue from the visible value."));
 
             DrawSection("Corner Radius");
             var radii = serializedObject.FindProperty("cornerRadii");
