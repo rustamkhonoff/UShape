@@ -146,6 +146,7 @@ namespace RustamKhonoff.UShape
         private List<IPanelStyle> observed;
         private Action<bool> styleChanged;
         private Vector4 meshPadding;
+        private bool meshWritesStencil;
         private bool hasWrittenStyle;
         private StyleTransition transition;
         private Vector4 effectPadding;
@@ -491,9 +492,19 @@ namespace RustamKhonoff.UShape
             padding.w = Mathf.Max(padding.w, shadow + offset.y);
         }
 
+        private bool WritesStencil => isMaskingGraphic && atlas != null && material.shader == atlas.Material.shader;
+
+        protected override void UpdateMaterial()
+        {
+            // uGUI Mask toggles material dirtiness without requesting a mesh rebuild.
+            if (meshWritesStencil != WritesStencil) UpdateGeometry();
+            base.UpdateMaterial();
+        }
+
         protected override void OnPopulateMesh(VertexHelper vh)
         {
             vh.Clear();
+            meshWritesStencil = WritesStencil;
             if (atlas == null) return;
             if (styleDirty) WriteStyle(true, Time.unscaledTimeAsDouble);
 
@@ -501,7 +512,7 @@ namespace RustamKhonoff.UShape
             if (r.width <= 0 || r.height <= 0) return;
             meshPadding = GetRenderPadding();
             paddingDirty = false;
-            var instance = new Vector4(slot, r.width * .5f, r.height * .5f, 0);
+            var instance = new Vector4(slot, r.width * .5f, r.height * .5f, meshWritesStencil ? 1 : 0);
             float left = -instance.y - meshPadding.x;
             float right = instance.y + meshPadding.y;
             float bottom = -instance.z - meshPadding.z;
@@ -514,6 +525,12 @@ namespace RustamKhonoff.UShape
             AddVertex(vh, new Vector2(right, bottom), origin, scale, instance);
             vh.AddTriangle(0, 1, 2);
             vh.AddTriangle(2, 3, 0);
+            if (meshWritesStencil)
+            {
+                // Back faces write the silhouette, front faces draw the full style.
+                vh.AddTriangle(0, 2, 1);
+                vh.AddTriangle(2, 0, 3);
+            }
         }
 
         private void AddVertex(VertexHelper vh, Vector2 local, Vector2 origin, Vector2 scale, Vector4 instance)

@@ -16,7 +16,16 @@ Shader "RustamKhonoff/UShape"
     SubShader
     {
         Tags { "Queue"="Transparent" "IgnoreProjector"="True" "RenderType"="Transparent" "PreviewType"="Plane" "CanUseSpriteAtlas"="True" }
-        Stencil { Ref [_Stencil] Comp [_StencilComp] Pass [_StencilOp] ReadMask [_StencilReadMask] WriteMask [_StencilWriteMask] }
+        Stencil
+        {
+            Ref [_Stencil]
+            CompFront [_StencilComp]
+            CompBack [_StencilComp]
+            PassFront Keep
+            PassBack [_StencilOp]
+            ReadMask [_StencilReadMask]
+            WriteMask [_StencilWriteMask]
+        }
         Cull Off Lighting Off ZWrite Off ZTest [unity_GUIZTestMode]
         Blend One OneMinusSrcAlpha
         ColorMask [_ColorMask]
@@ -36,7 +45,7 @@ Shader "RustamKhonoff/UShape"
                 float4 vertex : POSITION;
                 half4 color : COLOR;
                 float2 positionInPanel : TEXCOORD0;
-                float3 instance : TEXCOORD1; // Slot, half width, half height.
+                float4 instance : TEXCOORD1; // Slot, half width, half height, writes stencil.
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -45,7 +54,7 @@ Shader "RustamKhonoff/UShape"
                 float4 vertex : SV_POSITION;
                 half4 color : COLOR;
                 float2 positionInPanel : TEXCOORD0;
-                nointerpolation float3 instance : TEXCOORD1;
+                nointerpolation float4 instance : TEXCOORD1;
                 nointerpolation float4 radii : TEXCOORD2;
                 nointerpolation float4 effects : TEXCOORD3;
                 nointerpolation float4 fill : TEXCOORD4;
@@ -66,6 +75,7 @@ Shader "RustamKhonoff/UShape"
             half4 _Color;
             float _UShapeBlinkTime;
             int _UIVertexColorAlwaysGammaSpace;
+            float _ColorMask, _StencilOp;
             float4 _ClipRect;
             float _UIMaskSoftnessX, _UIMaskSoftnessY;
 
@@ -358,7 +368,7 @@ Shader "RustamKhonoff/UShape"
                 return stack;
             }
 
-            half4 frag(Varyings i) : SV_Target
+            half4 frag(Varyings i, bool frontFace : SV_IsFrontFace) : SV_Target
             {
                 float slot = i.instance.x;
                 uint flags = (uint)i.effects.z;
@@ -369,6 +379,29 @@ Shader "RustamKhonoff/UShape"
                 float distance = shapeDistance(i, i.positionInPanel, uniformRadius);
                 // Local pixel size stays stable across UV discontinuities at adjacent panels.
                 float aa = max(.0001, max(length(ddx(i.positionInPanel)), length(ddy(i.positionInPanel))));
+                #ifdef UNITY_UI_CLIP_RECT
+                float2 clipFactor = saturate((_ClipRect.zw - _ClipRect.xy - abs(i.mask.xy)) * i.mask.zw);
+                #endif
+
+                UNITY_BRANCH
+                if (i.instance.w > .5)
+                {
+                    if (!frontFace)
+                    {
+                        #ifdef UNITY_UI_ALPHACLIP
+                        // The silhouette also clears the same bits on the uGUI pop draw.
+                        clip(_StencilOp - .5);
+                        clip(-distance);
+                        #ifdef UNITY_UI_CLIP_RECT
+                        clip(clipFactor.x * clipFactor.y - .001);
+                        #endif
+                        return 0.;
+                        #else
+                        clip(-1.);
+                        #endif
+                    }
+                    clip(_ColorMask - .5);
+                }
                 float body = coverage(distance, aa);
                 float interior = i.effects.x > 0. ? coverage(distance + i.effects.x, aa) : body;
                 float border = body - interior;
@@ -434,7 +467,6 @@ Shader "RustamKhonoff/UShape"
                 surface.rgb *= i.color.rgb * i.color.a;
                 surface.a *= i.color.a;
                 #ifdef UNITY_UI_CLIP_RECT
-                float2 clipFactor = saturate((_ClipRect.zw - _ClipRect.xy - abs(i.mask.xy)) * i.mask.zw);
                 surface *= clipFactor.x * clipFactor.y;
                 #endif
                 #ifdef UNITY_UI_ALPHACLIP
