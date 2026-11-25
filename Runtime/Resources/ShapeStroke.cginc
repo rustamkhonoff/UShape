@@ -41,7 +41,7 @@ float2 strokeTravel(Varyings i, bool uniformRadius)
     float4 sections = straight + r.yzwx * 1.5707963267948966;
     float4 starts = float4(0., sections.x, sections.x + sections.y, sections.x + sections.y + sections.z);
     float total = starts.w + sections.w;
-    float travel = travelOnRoundedPanel(i.positionInPanel, h, r, straight, starts);
+    float travel = travelOnRoundedPanel(i.panelAndFillPoint.xy, h, r, straight, starts);
 
     uint side = (uint)i.pointer.x;
     UNITY_BRANCH
@@ -51,7 +51,7 @@ float2 strokeTravel(Varyings i, bool uniformRadius)
         float halfWidth = i.pointer.z;
         float height = i.pointer.w;
         float direction = side == 2u || side == 3u ? -1. : 1.;
-        float2 local = pointOnPointerSide(i.positionInPanel, side) - float2(i.pointer.y, sideSize.y);
+        float2 local = pointOnPointerSide(i.panelAndFillPoint.xy, side) - float2(i.pointer.y, sideSize.y);
         local.x *= direction;
         float baseStart = starts[side - 1u] + sideSize.x - r[side - 1u] + i.pointer.y * direction - halfWidth;
         float slopeLength = length(float2(halfWidth, height));
@@ -69,7 +69,7 @@ float2 strokeTravel(Varyings i, bool uniformRadius)
             float2 b = local - lerp(tip, right, second);
             float firstSquared = dot(a, a);
             float secondSquared = dot(b, b);
-            float panel = panelDistance(i.positionInPanel, h, r, uniformRadius);
+            float panel = panelDistance(i.panelAndFillPoint.xy, h, r, uniformRadius);
             bool baseIsHidden = abs(local.x) < halfWidth && abs(panel) >= abs(local.y);
             if (baseIsHidden || min(firstSquared, secondSquared) <= panel * panel)
             {

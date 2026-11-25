@@ -201,9 +201,9 @@ namespace RustamKhonoff.UShape
             row.Set(StyleTransition.FillAmountEntry, new Color(element.FillAmount, 0, 0, 0));
 
             int outerCount = WriteShadows(row, OuterShadowStart, element.outerShadow, element.GetExtraShadows(true), false, out _);
-            int innerCount = WriteShadows(row, InnerShadowStart, element.innerShadow, element.GetExtraShadows(false), true, out Vector2 innerReach);
+            int innerCount = WriteShadows(row, InnerShadowStart, element.innerShadow, element.GetExtraShadows(false), true, out Vector4 innerReach);
             if (innerCount > 0)
-                row.Set(InnerReachEntry, new Color(innerReach.x, innerReach.y, 0, 0));
+                row.Set(InnerReachEntry, new Color(innerReach.x, innerReach.y, innerReach.z, innerReach.w));
 
             if (hasPointer)
             {
@@ -305,10 +305,10 @@ namespace RustamKhonoff.UShape
         }
 
         private int WriteShadows(StyleRow row, int start, PanelShadow first, IReadOnlyList<PanelShadow> extra,
-            bool trackInnerReach, out Vector2 reach)
+            bool trackInnerReach, out Vector4 reach)
         {
             int count = 0;
-            reach = Vector2.zero;
+            reach = Vector4.zero;
             if (Shape.HasShadow(first))
             {
                 WriteShadow(row, start, first);
@@ -330,11 +330,14 @@ namespace RustamKhonoff.UShape
             return count;
         }
 
-        private static void IncludeInnerReach(ref Vector2 reach, PanelShadow shadow)
+        private static void IncludeInnerReach(ref Vector4 reach, PanelShadow shadow)
         {
             float softnessAndSpread = Mathf.Max(0, shadow.blur) + Mathf.Max(0, shadow.spread);
-            reach.x = Mathf.Max(reach.x, Mathf.Abs(shadow.offset.x) + softnessAndSpread);
-            reach.y = Mathf.Max(reach.y, Mathf.Abs(shadow.offset.y) + softnessAndSpread);
+            // Conservative inset on the left, bottom, right and top of the unshifted body.
+            reach.x = Mathf.Max(reach.x, softnessAndSpread + shadow.offset.x);
+            reach.y = Mathf.Max(reach.y, softnessAndSpread + shadow.offset.y);
+            reach.z = Mathf.Max(reach.z, softnessAndSpread - shadow.offset.x);
+            reach.w = Mathf.Max(reach.w, softnessAndSpread - shadow.offset.y);
         }
 
         private void WriteShadow(StyleRow row, int index, PanelShadow shadow)

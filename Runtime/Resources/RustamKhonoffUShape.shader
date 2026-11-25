@@ -53,14 +53,14 @@ Shader "RustamKhonoff/UShape"
             {
                 float4 vertex : SV_POSITION;
                 half4 color : COLOR;
-                float2 positionInPanel : TEXCOORD0;
+                float4 panelAndFillPoint : TEXCOORD0;
                 nointerpolation float4 instance : TEXCOORD1;
                 nointerpolation float4 radii : TEXCOORD2;
                 nointerpolation float4 effects : TEXCOORD3;
                 nointerpolation float4 fill : TEXCOORD4;
-                nointerpolation float4 fillSpec : TEXCOORD5;
+                nointerpolation float4 fillSpec : TEXCOORD5; // Gradient type, fill cutoff (yz), gradient offset.
                 nointerpolation float4 pointer : TEXCOORD7;
-                nointerpolation float4 innerInsetAndFill : TEXCOORD8;
+                nointerpolation float4 innerReach : TEXCOORD8;
                 nointerpolation float4 borderStroke : TEXCOORD9;
                 nointerpolation float4 outlineStroke : TEXCOORD10;
                 float3 blink : TEXCOORD11; // Signed distance to band center, core half width, falloff.
@@ -83,6 +83,12 @@ Shader "RustamKhonoff/UShape"
             float4 style(float slot, float entry)
             {
                 return tex2Dlod(_StyleTex, float4((entry + .5) / 35., (slot + .5) / 64., 0, 0));
+            }
+
+            float2 gradientPoint(float2 position, float2 size, float4 transform, float2 direction)
+            {
+                float2 q = (position / size + .5 - transform.xy) / transform.zw;
+                return float2(dot(q, direction), dot(q, float2(-direction.y, direction.x)));
             }
 
             // Express each side in coordinates where the pointer extends along positive Y.
@@ -172,7 +178,7 @@ Shader "RustamKhonoff/UShape"
                 UNITY_SETUP_INSTANCE_ID(v);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
                 o.vertex = UnityObjectToClipPos(v.vertex);
-                o.positionInPanel = v.positionInPanel;
+                o.panelAndFillPoint = float4(v.positionInPanel, 0., 0.);
                 o.instance = v.instance;
                 #ifndef UNITY_COLORSPACE_GAMMA
                 if (_UIVertexColorAlwaysGammaSpace)
@@ -195,7 +201,11 @@ Shader "RustamKhonoff/UShape"
                 o.fillSpec = 0;
                 UNITY_BRANCH
                 if ((flags & 4u) != 0u)
-                    o.fillSpec = style(slot, 3.);
+                {
+                    float4 spec = style(slot, 3.);
+                    o.fillSpec.xw = spec.xw;
+                    o.panelAndFillPoint.zw = gradientPoint(v.positionInPanel, size, style(slot, 4.), spec.yz);
+                }
 
                 o.pointer = 0;
                 UNITY_BRANCH
@@ -208,13 +218,10 @@ Shader "RustamKhonoff/UShape"
                 if ((flags & 8192u) != 0u)
                     animatedBlink(slot, v.instance.yz, v.positionInPanel, o.pointer, o.blink, o.blinkColor);
 
-                o.innerInsetAndFill = 0;
+                o.innerReach = 0;
                 UNITY_BRANCH
                 if ((uint)o.effects.w >= 8u)
-                {
-                    float largestRadius = max(max(o.radii.x, o.radii.y), max(o.radii.z, o.radii.w));
-                    o.innerInsetAndFill.xy = style(slot, 28.).xy + largestRadius;
-                }
+                    o.innerReach = style(slot, 28.);
 
                 uint fillMode = (flags >> 14u) & 3u;
                 UNITY_BRANCH
@@ -229,7 +236,7 @@ Shader "RustamKhonoff/UShape"
                         {
                             float s, c;
                             sincos(amount * 6.28318530718, s, c);
-                            o.innerInsetAndFill.zw = float2(s, c);
+                            o.fillSpec.yz = float2(s, c);
                         }
                         else
                         {
@@ -238,7 +245,7 @@ Shader "RustamKhonoff/UShape"
                             uint side = (uint)o.pointer.x;
                             float start = -extent - (side == (horizontal ? 4u : 3u) ? o.pointer.w : 0.);
                             float end = extent + (side == (horizontal ? 2u : 1u) ? o.pointer.w : 0.);
-                            o.innerInsetAndFill.zw = float2(lerp(start, end, amount), 1.);
+                            o.fillSpec.yz = float2(lerp(start, end, amount), 1.);
                         }
                     }
                 }
@@ -352,9 +359,9 @@ Shader "RustamKhonoff/UShape"
 
             float fillCoverage(Varyings i, uint mode, float aa)
             {
-                float2 parameters = i.innerInsetAndFill.zw;
+                float2 parameters = i.fillSpec.yz;
                 if (all(parameters == 0.)) return 0.;
-                float2 p = i.positionInPanel;
+                float2 p = i.panelAndFillPoint.xy;
                 if (mode != 3u)
                     return coverage((mode == 1u ? p.x : p.y) - parameters.x, aa);
 
@@ -367,21 +374,25 @@ Shader "RustamKhonoff/UShape"
 
             #include "ShapeStroke.cginc"
 
-            half4 samplePaint(Varyings i, float slot, float lane, float4 tint, float4 spec)
+            half4 sampleRamp(float slot, float lane, half4 tint, float2 q, float2 spec)
+            {
+                uint rampFlags = (uint)spec.x;
+                uint type = rampFlags & 7u;
+                float t = q.x + .5;
+                if (type == 2u) t = length(q) * 2.;
+                else if (type == 3u) t = atan2(q.y, q.x) / 6.28318530718 + 1.;
+                else if (type == 4u) t = (abs(q.x) + abs(q.y)) * 2.;
+                t = type == 3u ? frac(t + spec.y) : saturate(t + spec.y);
+                float x = t * 255.;
+                if ((rampFlags & 8u) != 0u) x = floor(x + .5);
+                return tex2Dlod(_MainTex, float4((x + .5) / 256., (slot * 3. + lane + .5) / 192., 0, 0)) * tint;
+            }
+
+            half4 sampleStrokePaint(Varyings i, float slot, float lane, half4 tint, float4 spec)
             {
                 if (spec.x < .5) return tint;
-                float4 transform = style(slot, 4. + lane * 3.);
-                float2 q = (i.positionInPanel / (i.instance.yz * 2.) + .5 - transform.xy) / transform.zw;
-                q = float2(q.x * spec.y + q.y * spec.z, -q.x * spec.z + q.y * spec.y);
-                float type = fmod(spec.x, 8.);
-                float t = q.x + .5;
-                if (type == 2.) t = length(q) * 2.;
-                else if (type == 3.) t = atan2(q.y, q.x) / 6.28318530718 + 1.;
-                else if (type == 4.) t = (abs(q.x) + abs(q.y)) * 2.;
-                t = type == 3. ? frac(t + spec.w) : saturate(t + spec.w);
-                float x = t * 255.;
-                if (spec.x >= 8.) x = floor(x + .5);
-                return tex2Dlod(_MainTex, float4((x + .5) / 256., (slot * 3. + lane + .5) / 192., 0, 0)) * tint;
+                float2 q = gradientPoint(i.panelAndFillPoint.xy, i.instance.yz * 2., style(slot, 4. + lane * 3.), spec.yz);
+                return sampleRamp(slot, lane, tint, q, spec.xw);
             }
 
             half4 premultiply(half4 color, float mask)
@@ -392,7 +403,18 @@ Shader "RustamKhonoff/UShape"
 
             half4 over(half4 under, half4 top) { return top + under * (1. - top.a); }
 
-            half4 composeShadows(Varyings i, float aa, bool uniformRadius, int count, bool outer)
+            bool innerShadowsMayContribute(Varyings i, float aa)
+            {
+                float2 position = i.panelAndFillPoint.xy;
+                float2 halfSize = i.instance.yz;
+                float2 margin = min(halfSize + position - i.innerReach.xy, halfSize - position - i.innerReach.zw);
+                float radius = max(max(i.radii.x, i.radii.y), max(i.radii.z, i.radii.w));
+                // Offsets and blur determine the straight edge bands. A rounded
+                // corner can only contribute where both axes are close to its edges.
+                return min(margin.x, margin.y) < aa || max(margin.x, margin.y) < radius + aa;
+            }
+
+            half4 composeShadows(Varyings i, float aa, bool uniformRadius, int count, bool outer, float bodyDistance)
             {
                 // Atlas layout matches OuterShadowStart and InnerShadowStart in PanelAtlas.
                 float start = outer ? 11. : 19.;
@@ -401,11 +423,16 @@ Shader "RustamKhonoff/UShape"
                 {
                     float entry = start + layer * 2.;
                     float4 shadow = style(i.instance.x, entry + 1.);
-                    float distance = shapeDistance(i, i.positionInPanel - shadow.xy, uniformRadius);
+                    float distance = bodyDistance;
+                    UNITY_BRANCH
+                    if (any(shadow.xy != 0.))
+                        distance = shapeDistance(i, i.panelAndFillPoint.xy - shadow.xy, uniformRadius);
                     float mask = outer
                         ? coverage(distance - shadow.w, max(aa, shadow.z))
                         : 1. - coverage(distance + shadow.w, max(aa, shadow.z));
-                    stack = over(stack, premultiply(style(i.instance.x, entry), mask));
+                    UNITY_BRANCH
+                    if (mask > 0.)
+                        stack = over(stack, premultiply(style(i.instance.x, entry), mask));
                 }
                 return stack;
             }
@@ -418,9 +445,12 @@ Shader "RustamKhonoff/UShape"
                 uint shadowCounts = (uint)i.effects.w;
                 int outerCount = (int)(shadowCounts & 7u);
                 int innerCount = (int)(shadowCounts >> 3u);
-                float distance = shapeDistance(i, i.positionInPanel, uniformRadius);
+                float2 position = i.panelAndFillPoint.xy;
+                float distance = shapeDistance(i, position, uniformRadius);
                 // Local pixel size stays stable across UV discontinuities at adjacent panels.
-                float aa = max(.0001, max(length(ddx(i.positionInPanel)), length(ddy(i.positionInPanel))));
+                float2 dx = ddx(position);
+                float2 dy = ddy(position);
+                float aa = sqrt(max(1e-8, max(dot(dx, dx), dot(dy, dy))));
                 #ifdef UNITY_UI_CLIP_RECT
                 float2 clipFactor = saturate((_ClipRect.zw - _ClipRect.xy - abs(i.mask.xy)) * i.mask.zw);
                 #endif
@@ -467,6 +497,7 @@ Shader "RustamKhonoff/UShape"
                 }
 
                 half4 surface = 0;
+                UNITY_BRANCH
                 if (interior > 0.)
                 {
                     uint fillMode = (flags >> 14u) & 3u;
@@ -477,17 +508,21 @@ Shader "RustamKhonoff/UShape"
                     UNITY_BRANCH
                     if (amountCoverage > 0.)
                     {
-                        half4 fill = premultiply(samplePaint(i, slot, 0., i.fill, i.fillSpec), 1.);
-                        // Inside the core, all enabled inner-shadow masks are zero.
+                        half4 paint = i.fill;
                         UNITY_BRANCH
-                        if (innerCount > 0 && any(i.instance.yz - abs(i.positionInPanel) < i.innerInsetAndFill.xy + aa))
-                            fill = over(fill, composeShadows(i, aa, uniformRadius, innerCount, false));
+                        if ((flags & 4u) != 0u)
+                            paint = sampleRamp(slot, 0., paint, i.panelAndFillPoint.zw, i.fillSpec.xw);
+                        half4 fill = premultiply(paint, 1.);
+                        UNITY_BRANCH
+                        if (innerCount > 0 && innerShadowsMayContribute(i, aa))
+                            fill = over(fill, composeShadows(i, aa, uniformRadius, innerCount, false, distance));
                         surface += fill * (interior * amountCoverage);
                     }
                 }
 
+                UNITY_BRANCH
                 if (border > 0.)
-                    surface += premultiply(samplePaint(i, slot, 1., style(slot, 5.), style(slot, 6.)), border * i.borderStroke.w);
+                    surface += premultiply(sampleStrokePaint(i, slot, 1., style(slot, 5.), style(slot, 6.)), border * i.borderStroke.w);
 
                 UNITY_BRANCH
                 if (i.blinkColor.a > 0. && surface.a > 0.)
@@ -498,6 +533,7 @@ Shader "RustamKhonoff/UShape"
                     surface.rgb = lerp(surface.rgb, i.blinkColor.rgb * surface.a, saturate(i.blinkColor.a) * mask);
                 }
 
+                UNITY_BRANCH
                 if (outline > 0.)
                 {
                     UNITY_BRANCH
@@ -505,12 +541,13 @@ Shader "RustamKhonoff/UShape"
                         outline *= strokePatternMask(outlinePattern, i.outlineStroke, travel,
                             i.effects.y, distance - i.effects.y * .5, aa);
                     if (outline > 0.)
-                        surface += premultiply(samplePaint(i, slot, 2., style(slot, 8.), style(slot, 9.)), outline * i.outlineStroke.w);
+                        surface += premultiply(sampleStrokePaint(i, slot, 2., style(slot, 8.), style(slot, 9.)), outline * i.outlineStroke.w);
                 }
 
+                UNITY_BRANCH
                 if (outerCount > 0 && body < 1.)
                 {
-                    half4 outer = composeShadows(i, aa, uniformRadius, outerCount, true);
+                    half4 outer = composeShadows(i, aa, uniformRadius, outerCount, true, distance);
                     surface = over(outer * (1. - body), surface);
                 }
 
