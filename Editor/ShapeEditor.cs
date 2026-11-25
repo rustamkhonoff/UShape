@@ -189,6 +189,11 @@ namespace RustamKhonoff.UShape.Editor
             DrawSection("Fill");
             EditorGUILayout.PropertyField(serializedObject.FindProperty("m_Color"), BaseColor);
             DrawPaint(serializedObject.FindProperty("fill"));
+            var fillMode = serializedObject.FindProperty("fillMode");
+            EditorGUILayout.PropertyField(fillMode, new GUIContent("Fill Mode",
+                "Horizontal: left to right. Vertical: bottom to top. Radial: clockwise from the top."));
+            if (fillMode.hasMultipleDifferentValues || fillMode.intValue != (int)ShapeFillMode.None)
+                EditorGUILayout.PropertyField(serializedObject.FindProperty("fillAmount"));
             EditorGUILayout.PropertyField(serializedObject.FindProperty("styleTransitionDuration"),
                 new GUIContent("Style Transition (s)", "Smooths runtime property changes. New targets continue from the visible value."));
 

@@ -197,6 +197,8 @@ namespace RustamKhonoff.UShape
                 row.Set(BlinkEntry + 2, new Color(element.BlinkEpoch + Mathf.Max(0, blink.initialDelay),
                     Mathf.Max(.01f, blink.duration), Mathf.Max(0, blink.interval), 0));
             }
+            flags |= (int)element.FillMode << 14;
+            row.Set(StyleTransition.FillAmountEntry, new Color(element.FillAmount, 0, 0, 0));
 
             int outerCount = WriteShadows(row, OuterShadowStart, element.outerShadow, element.GetExtraShadows(true), false, out _);
             int innerCount = WriteShadows(row, InnerShadowStart, element.innerShadow, element.GetExtraShadows(false), true, out Vector2 innerReach);

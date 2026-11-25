@@ -60,7 +60,7 @@ Shader "RustamKhonoff/UShape"
                 nointerpolation float4 fill : TEXCOORD4;
                 nointerpolation float4 fillSpec : TEXCOORD5;
                 nointerpolation float4 pointer : TEXCOORD7;
-                nointerpolation float2 innerInset : TEXCOORD8;
+                nointerpolation float4 innerInsetAndFill : TEXCOORD8;
                 nointerpolation float4 borderStroke : TEXCOORD9;
                 nointerpolation float4 outlineStroke : TEXCOORD10;
                 float3 blink : TEXCOORD11; // Signed distance to band center, core half width, falloff.
@@ -82,7 +82,7 @@ Shader "RustamKhonoff/UShape"
             // Matches StyleWidth and Capacity in PanelAtlas. Unfiltered reads are safe at texel centers.
             float4 style(float slot, float entry)
             {
-                return tex2Dlod(_StyleTex, float4((entry + .5) / 34., (slot + .5) / 64., 0, 0));
+                return tex2Dlod(_StyleTex, float4((entry + .5) / 35., (slot + .5) / 64., 0, 0));
             }
 
             // Express each side in coordinates where the pointer extends along positive Y.
@@ -208,12 +208,39 @@ Shader "RustamKhonoff/UShape"
                 if ((flags & 8192u) != 0u)
                     animatedBlink(slot, v.instance.yz, v.positionInPanel, o.pointer, o.blink, o.blinkColor);
 
-                o.innerInset = 0;
+                o.innerInsetAndFill = 0;
                 UNITY_BRANCH
                 if ((uint)o.effects.w >= 8u)
                 {
                     float largestRadius = max(max(o.radii.x, o.radii.y), max(o.radii.z, o.radii.w));
-                    o.innerInset = style(slot, 28.).xy + largestRadius;
+                    o.innerInsetAndFill.xy = style(slot, 28.).xy + largestRadius;
+                }
+
+                uint fillMode = (flags >> 14u) & 3u;
+                UNITY_BRANCH
+                if (fillMode != 0u)
+                {
+                    float amount = style(slot, 34.).r;
+                    if (amount >= 1.)
+                        o.effects.z = (float)(flags & 16383u);
+                    else if (amount > 0.)
+                    {
+                        if (fillMode == 3u)
+                        {
+                            float s, c;
+                            sincos(amount * 6.28318530718, s, c);
+                            o.innerInsetAndFill.zw = float2(s, c);
+                        }
+                        else
+                        {
+                            bool horizontal = fillMode == 1u;
+                            float extent = horizontal ? v.instance.y : v.instance.z;
+                            uint side = (uint)o.pointer.x;
+                            float start = -extent - (side == (horizontal ? 4u : 3u) ? o.pointer.w : 0.);
+                            float end = extent + (side == (horizontal ? 2u : 1u) ? o.pointer.w : 0.);
+                            o.innerInsetAndFill.zw = float2(lerp(start, end, amount), 1.);
+                        }
+                    }
                 }
 
                 #ifdef UNITY_UI_CLIP_RECT
@@ -323,6 +350,21 @@ Shader "RustamKhonoff/UShape"
                 return 1. - smoothstep(-aa, aa, distance);
             }
 
+            float fillCoverage(Varyings i, uint mode, float aa)
+            {
+                float2 parameters = i.innerInsetAndFill.zw;
+                if (all(parameters == 0.)) return 0.;
+                float2 p = i.positionInPanel;
+                if (mode != 3u)
+                    return coverage((mode == 1u ? p.x : p.y) - parameters.x, aa);
+
+                // A clockwise sector is the intersection of the two half-planes up
+                // to half a turn, and their union for larger sweeps.
+                float start = -p.x;
+                float end = dot(p, float2(parameters.y, -parameters.x));
+                return coverage(parameters.x >= 0. ? max(start, end) : min(start, end), aa);
+            }
+
             #include "ShapeStroke.cginc"
 
             half4 samplePaint(Varyings i, float slot, float lane, float4 tint, float4 spec)
@@ -427,13 +469,21 @@ Shader "RustamKhonoff/UShape"
                 half4 surface = 0;
                 if (interior > 0.)
                 {
-                    half4 fill = premultiply(samplePaint(i, slot, 0., i.fill, i.fillSpec), 1.);
-                    // In this core every shifted point is far enough inside the rounded panel.
-                    // Its inner-shadow mask is exactly zero for all enabled layers.
+                    uint fillMode = (flags >> 14u) & 3u;
+                    float amountCoverage = 1.;
                     UNITY_BRANCH
-                    if (innerCount > 0 && any(i.instance.yz - abs(i.positionInPanel) < i.innerInset + aa))
-                        fill = over(fill, composeShadows(i, aa, uniformRadius, innerCount, false));
-                    surface += fill * interior;
+                    if (fillMode != 0u)
+                        amountCoverage = fillCoverage(i, fillMode, aa);
+                    UNITY_BRANCH
+                    if (amountCoverage > 0.)
+                    {
+                        half4 fill = premultiply(samplePaint(i, slot, 0., i.fill, i.fillSpec), 1.);
+                        // Inside the core, all enabled inner-shadow masks are zero.
+                        UNITY_BRANCH
+                        if (innerCount > 0 && any(i.instance.yz - abs(i.positionInPanel) < i.innerInsetAndFill.xy + aa))
+                            fill = over(fill, composeShadows(i, aa, uniformRadius, innerCount, false));
+                        surface += fill * (interior * amountCoverage);
+                    }
                 }
 
                 if (border > 0.)

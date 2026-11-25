@@ -7,6 +7,7 @@ using UnityEngine.Scripting.APIUpdating;
 namespace RustamKhonoff.UShape
 {
     public enum GradientType { Solid, Linear, Radial, Angular, Diamond }
+    public enum ShapeFillMode { None, Horizontal, Vertical, Radial }
     public enum PointerSide { None, Top, Right, Bottom, Left }
     public enum StrokePattern { Solid, Dashed, Dotted }
     public enum StrokeMotion { None, March, Pulse }
@@ -20,6 +21,8 @@ namespace RustamKhonoff.UShape
         [Tooltip("Top-left, top-right, bottom-right, bottom-left, in local UI units.")]
         public Vector4 cornerRadii = new Vector4(16, 16, 16, 16);
         public PanelPaint fill = new PanelPaint();
+        [SerializeField] private ShapeFillMode fillMode;
+        [SerializeField, Range(0, 1)] private float fillAmount = 1f;
         public PanelPointer pointer = new PanelPointer
         {
             side = PointerSide.None,
@@ -87,6 +90,8 @@ namespace RustamKhonoff.UShape
         public Color BaseColor { get => color; set => color = value; }
         public Vector4 CornerRadii { get => cornerRadii; set => SetVisual(ref cornerRadii, value); }
         public PanelPaint Fill { get => fill; set => ReplaceStyle(ref fill, value); }
+        public ShapeFillMode FillMode { get => fillMode; set => SetVisual(ref fillMode, value); }
+        public float FillAmount { get => fillAmount; set => SetVisual(ref fillAmount, Mathf.Clamp01(value)); }
         public float BorderWidth { get => borderWidth; set => SetVisual(ref borderWidth, Mathf.Max(0, value)); }
         public PanelPaint Border { get => border; set => ReplaceStyle(ref border, value); }
         public PanelStroke BorderStroke { get => borderStroke; set => SetVisual(ref borderStroke, value); }

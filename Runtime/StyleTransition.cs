@@ -6,8 +6,8 @@ namespace RustamKhonoff.UShape
     // Holds one target, regardless of how often the caller changes properties.
     internal sealed class StyleTransition
     {
-        internal const int RowWidth = 34;
-        private const int BlendMaskWidth = 32;
+        internal const int FillAmountEntry = 34;
+        internal const int RowWidth = FillAmountEntry + 1;
         private const int Widths = 1;
         private const int OuterStart = 11;
         private const int InnerStart = 19;
@@ -18,7 +18,7 @@ namespace RustamKhonoff.UShape
         private const float SettleRate = 4.6051702f; // 99% of the distance over the configured duration.
 
         internal readonly Color[] Target = new Color[RowWidth];
-        private uint moving;
+        private ulong moving;
         private double lastTick;
         private double settleAt;
         private float seconds;
@@ -32,7 +32,7 @@ namespace RustamKhonoff.UShape
             int liveFlags = (int)live.b, targetFlags = (int)desired.b;
             int liveShadows = (int)live.a, targetShadows = (int)desired.a;
 
-            uint blend = Bit(0) | Bit(Widths) | Bit(2) | Bit(5) | Bit(8);
+            ulong blend = Bit(0) | Bit(Widths) | Bit(2) | Bit(5) | Bit(8) | Bit(FillAmountEntry);
             for (int paint = 3; paint <= 9; paint += 3)
                 if (Target[paint].r > 0 && Target[paint].r == data[start + paint].r)
                     blend |= Bit(paint) | Bit(paint + 1);
@@ -54,11 +54,11 @@ namespace RustamKhonoff.UShape
             dirty |= SetStrokeSpeed(data, start, BorderStroke);
             dirty |= SetStrokeSpeed(data, start, OutlineStroke);
 
-            uint next = 0;
+            ulong next = 0;
             for (int i = 0; i < RowWidth; i++)
             {
                 int index = start + i;
-                if (i >= BlendMaskWidth || (blend & Bit(i)) == 0)
+                if ((blend & Bit(i)) == 0)
                     dirty |= Set(data, index, Target[i]);
                 else if (!data[index].Equals(Target[i]))
                     next |= Bit(i);
@@ -78,7 +78,7 @@ namespace RustamKhonoff.UShape
             lastTick = now;
             bool finished = weight >= 1f;
             bool dirty = false;
-            for (int i = 0; i < BlendMaskWidth; i++)
+            for (int i = 0; i < RowWidth; i++)
             {
                 if ((moving & Bit(i)) == 0) continue;
                 int index = start + i;
@@ -119,8 +119,8 @@ namespace RustamKhonoff.UShape
             return value;
         }
 
-        private static uint Bit(int index) => 1u << index;
-        private static uint ShadowMask(int start, int count) => ((1u << (count * 2)) - 1u) << start;
+        private static ulong Bit(int index) => 1ul << index;
+        private static ulong ShadowMask(int start, int count) => ((1ul << (count * 2)) - 1ul) << start;
 
         private static bool Set(NativeArray<Color> data, int index, Color value)
         {
