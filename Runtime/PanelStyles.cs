@@ -49,6 +49,42 @@ namespace RustamKhonoff.UShape
         public override int GetHashCode() => HashCode.Combine(side, position, width, height);
     }
 
+    [Serializable]
+    public struct PanelBlink : IEquatable<PanelBlink>
+    {
+        public bool enabled;
+        [Min(0), Tooltip("Width of the bright core, in local UI units.")]
+        public float width;
+        [Min(0), Tooltip("Soft falloff on each side, in local UI units.")]
+        public float blur;
+        [Tooltip("Highlight color and opacity.")]
+        public Color color;
+        [Tooltip("Travel direction in degrees, counter-clockwise from right.")]
+        public float angle;
+        [Min(.01f), Tooltip("Duration of one sweep, in seconds.")]
+        public float duration;
+        [Min(0), Tooltip("Pause after each sweep, in seconds.")]
+        public float interval;
+        [Min(0), Tooltip("One-time delay before the first sweep, in seconds.")]
+        public float initialDelay;
+
+        internal static PanelBlink Default => new PanelBlink
+        {
+            width = 20, blur = 16, color = new Color(1, 1, 1, .5f),
+            angle = 25, duration = .65f, interval = 2, initialDelay = .35f
+        };
+
+        internal bool IsVisible => enabled && width > 0 && color.a > 0;
+
+        public bool Equals(PanelBlink other) =>
+            enabled == other.enabled && width.Equals(other.width) && blur.Equals(other.blur)
+            && color.Equals(other.color) && angle.Equals(other.angle) && duration.Equals(other.duration)
+            && interval.Equals(other.interval) && initialDelay.Equals(other.initialDelay);
+
+        public override bool Equals(object other) => other is PanelBlink blink && Equals(blink);
+        public override int GetHashCode() => HashCode.Combine(enabled, width, blur, color, angle, duration, interval, initialDelay);
+    }
+
     internal interface IPanelStyle
     {
         event Action<bool> Changed;

@@ -27,6 +27,7 @@ namespace RustamKhonoff.UShape
             width = 32,
             height = 16
         };
+        [SerializeField] private PanelBlink blink = PanelBlink.Default;
         [Min(0)] public float borderWidth;
         public PanelPaint border = new PanelPaint();
         public PanelStroke borderStroke = PanelStroke.Default;
@@ -55,6 +56,34 @@ namespace RustamKhonoff.UShape
             }
         }
 
+        [SerializeField, Tooltip("Scale of the drawn shape around its center.")]
+        private Vector2 visualScale = Vector2.one;
+        [SerializeField, Tooltip("Offset of the drawn shape, in local UI units.")]
+        private Vector2 visualOffset;
+        private float pressScale = 1f;
+        private Vector2 pressOffset;
+
+        /// <summary>Scale of the drawn shape around its center.</summary>
+        public Vector2 Scale
+        {
+            get => visualScale;
+            set { if (StyleValue.Set(ref visualScale, value)) SetVerticesDirty(); }
+        }
+
+        /// <summary>Offset of the drawn shape, in local UI units.</summary>
+        public Vector2 Offset
+        {
+            get => visualOffset;
+            set { if (StyleValue.Set(ref visualOffset, value)) SetVerticesDirty(); }
+        }
+
+        internal void SetPressTransform(float scale, Vector2 offset)
+        {
+            bool scaleChanged = StyleValue.Set(ref pressScale, scale);
+            bool offsetChanged = StyleValue.Set(ref pressOffset, offset);
+            if (scaleChanged || offsetChanged) SetVerticesDirty();
+        }
+
         public Color BaseColor { get => color; set => color = value; }
         public Vector4 CornerRadii { get => cornerRadii; set => SetVisual(ref cornerRadii, value); }
         public PanelPaint Fill { get => fill; set => ReplaceStyle(ref fill, value); }
@@ -68,6 +97,26 @@ namespace RustamKhonoff.UShape
         public float OutlinePhase { get => outlineStroke.phase; set => SetVisual(ref outlineStroke.phase, value); }
         public PanelPointer Pointer { get => pointer; set => SetVisual(ref pointer, value, true); }
         public float PointerPosition { get => pointer.position; set => SetVisual(ref pointer.position, Mathf.Clamp01(value)); }
+        public PanelBlink Blink
+        {
+            get => blink;
+            set
+            {
+                if (blink.enabled != value.enabled)
+                {
+                    wasBlinkEnabled = value.enabled;
+                    blinkEpoch = Time.unscaledTime;
+                }
+                SetVisual(ref blink, value);
+            }
+        }
+
+        /// <summary>Restarts the Blink clock, including its initial delay.</summary>
+        public void RestartBlink()
+        {
+            blinkEpoch = Time.unscaledTime;
+            QueueStyleUpdate(false);
+        }
         public PanelShadow OuterShadow { get => outerShadow; set => ReplaceStyle(ref outerShadow, value, true); }
         public PanelShadow InnerShadow { get => innerShadow; set => ReplaceStyle(ref innerShadow, value); }
 
@@ -103,6 +152,12 @@ namespace RustamKhonoff.UShape
         private Vector4 pointerPadding;
         private Vector4 heldEffects;
         private Vector4 heldPointer;
+        private float blinkEpoch;
+        private bool blinkClockRegistered;
+        private bool wasBlinkEnabled;
+
+        internal float BlinkEpoch => blinkEpoch;
+        internal bool HasLiveBlink => blinkClockRegistered;
 
         public override Material defaultMaterial => atlas != null ? atlas.Material : base.defaultMaterial;
         public override Texture mainTexture => atlas != null ? atlas.Ramps : Texture2D.whiteTexture;
@@ -114,6 +169,8 @@ namespace RustamKhonoff.UShape
             atlas = PanelAtlas.Acquire(out slot);
             if (atlas == null) Debug.LogError("UShape shader was not found in Resources.", this);
             EnsureCanvasChannels();
+            blinkEpoch = Time.unscaledTime;
+            wasBlinkEnabled = blink.enabled;
             styleDirty = true;
             observersNeedSync = true;
             if (atlas != null) SyncObservedStyles();
@@ -123,6 +180,11 @@ namespace RustamKhonoff.UShape
         {
             base.OnDisable();
             PanelAtlas.CancelStyle(this);
+            if (blinkClockRegistered)
+            {
+                PanelAtlas.ReleaseBlinkClock();
+                blinkClockRegistered = false;
+            }
             PanelAtlas.StopTransition(this);
             transition?.Cancel();
             hasWrittenStyle = false;
@@ -274,6 +336,7 @@ namespace RustamKhonoff.UShape
 
         private void WriteStyle(bool allowTransition, double now)
         {
+            SyncBlinkClock();
             if (observersNeedSync) SyncObservedStyles();
             var nextEffects = paddingDirty || !hasWrittenStyle ? GetEffectPadding() : effectPadding;
             var nextPointer = paddingDirty || !hasWrittenStyle ? GetPointerPadding() : pointerPadding;
@@ -310,6 +373,21 @@ namespace RustamKhonoff.UShape
             pointerPadding = nextPointer;
             hasWrittenStyle = true;
             styleDirty = false;
+        }
+
+        private void SyncBlinkClock()
+        {
+            if (wasBlinkEnabled != blink.enabled)
+            {
+                wasBlinkEnabled = blink.enabled;
+                blinkEpoch = Time.unscaledTime;
+            }
+
+            bool needsClock = Application.isPlaying && blink.IsVisible;
+            if (blinkClockRegistered == needsClock) return;
+            blinkClockRegistered = needsClock;
+            if (needsClock) PanelAtlas.AcquireBlinkClock();
+            else PanelAtlas.ReleaseBlinkClock();
         }
 
         private Vector4 GetRenderPadding() => transition?.IsRunning == true
@@ -424,18 +502,24 @@ namespace RustamKhonoff.UShape
             meshPadding = GetRenderPadding();
             paddingDirty = false;
             var instance = new Vector4(slot, r.width * .5f, r.height * .5f, 0);
-            float left = meshPadding.x, right = meshPadding.y, bottom = meshPadding.z, top = meshPadding.w;
-            AddVertex(vh, new Vector2(r.xMin - left, r.yMin - bottom), new Vector2(-r.width * .5f - left, -r.height * .5f - bottom), instance);
-            AddVertex(vh, new Vector2(r.xMin - left, r.yMax + top), new Vector2(-r.width * .5f - left, r.height * .5f + top), instance);
-            AddVertex(vh, new Vector2(r.xMax + right, r.yMax + top), new Vector2(r.width * .5f + right, r.height * .5f + top), instance);
-            AddVertex(vh, new Vector2(r.xMax + right, r.yMin - bottom), new Vector2(r.width * .5f + right, -r.height * .5f - bottom), instance);
-            vh.AddTriangle(0, 1, 2); vh.AddTriangle(2, 3, 0);
+            float left = -instance.y - meshPadding.x;
+            float right = instance.y + meshPadding.y;
+            float bottom = -instance.z - meshPadding.z;
+            float top = instance.z + meshPadding.w;
+            Vector2 origin = r.center + visualOffset + pressOffset;
+            Vector2 scale = visualScale * pressScale;
+            AddVertex(vh, new Vector2(left, bottom), origin, scale, instance);
+            AddVertex(vh, new Vector2(left, top), origin, scale, instance);
+            AddVertex(vh, new Vector2(right, top), origin, scale, instance);
+            AddVertex(vh, new Vector2(right, bottom), origin, scale, instance);
+            vh.AddTriangle(0, 1, 2);
+            vh.AddTriangle(2, 3, 0);
         }
 
-        private void AddVertex(VertexHelper vh, Vector2 pos, Vector2 local, Vector4 instance)
+        private void AddVertex(VertexHelper vh, Vector2 local, Vector2 origin, Vector2 scale, Vector4 instance)
         {
             UIVertex vertex = UIVertex.simpleVert;
-            vertex.position = pos;
+            vertex.position = origin + Vector2.Scale(local, scale);
             vertex.color = color;
             vertex.uv0 = local;
             vertex.uv1 = instance;

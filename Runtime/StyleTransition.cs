@@ -6,7 +6,8 @@ namespace RustamKhonoff.UShape
     // Holds one target, regardless of how often the caller changes properties.
     internal sealed class StyleTransition
     {
-        internal const int RowWidth = 32;
+        internal const int RowWidth = 34;
+        private const int BlendMaskWidth = 32;
         private const int Widths = 1;
         private const int OuterStart = 11;
         private const int InnerStart = 19;
@@ -57,7 +58,7 @@ namespace RustamKhonoff.UShape
             for (int i = 0; i < RowWidth; i++)
             {
                 int index = start + i;
-                if ((blend & Bit(i)) == 0)
+                if (i >= BlendMaskWidth || (blend & Bit(i)) == 0)
                     dirty |= Set(data, index, Target[i]);
                 else if (!data[index].Equals(Target[i]))
                     next |= Bit(i);
@@ -77,7 +78,7 @@ namespace RustamKhonoff.UShape
             lastTick = now;
             bool finished = weight >= 1f;
             bool dirty = false;
-            for (int i = 0; i < RowWidth; i++)
+            for (int i = 0; i < BlendMaskWidth; i++)
             {
                 if ((moving & Bit(i)) == 0) continue;
                 int index = start + i;

@@ -16,7 +16,7 @@ namespace RustamKhonoff.UShape.Editor
         private const string Leaving = "ushape-pane--leaving";
         private const int PaneFadeOutMs = 85;
 
-        private static readonly string[] Groups = { "Appearance", "Edges", "Shadows" };
+        private static readonly string[] Groups = { "Appearance", "Edges", "Shadows", "Transform", "Effects" };
         private static readonly GUIContent BaseColor = new GUIContent("Base Color", "Multiplies all layers and effects.");
         private static readonly GUIContent AllCorners = new GUIContent("All Corners", "Set the same radius on all four corners.");
         private static readonly GUIContent TopLeft = new GUIContent("Top Left");
@@ -25,6 +25,8 @@ namespace RustamKhonoff.UShape.Editor
         private static readonly GUIContent BottomLeft = new GUIContent("Bottom Left");
         private int group;
         private bool showInteraction;
+        private static readonly GUIContent ScaleLabel = new GUIContent("Scale", "Scale of the drawn shape around its center.");
+        private static readonly GUIContent OffsetLabel = new GUIContent("Offset", "Offset of the drawn shape, in local UI units.");
 
         private void OnEnable()
         {
@@ -57,6 +59,7 @@ namespace RustamKhonoff.UShape.Editor
 
             var indicator = new VisualElement { name = "shape-tab-indicator", pickingMode = PickingMode.Ignore };
             indicator.AddToClassList("ushape-tab-indicator");
+            indicator.style.width = Length.Percent(100f / Groups.Length);
             rail.Add(indicator);
 
             var pane = new VisualElement { name = "shape-pane" };
@@ -146,8 +149,20 @@ namespace RustamKhonoff.UShape.Editor
                     DrawShadowStack("Outer Shadows", "outerShadow", "extraOuterShadows");
                     DrawShadowStack("Inner Shadows", "innerShadow", "extraInnerShadows");
                     break;
+                case 3:
+                    DrawTransform();
+                    break;
+                case 4:
+                    DrawEffects();
+                    break;
             }
             serializedObject.ApplyModifiedProperties();
+        }
+
+        private void DrawTransform()
+        {
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("visualScale"), ScaleLabel);
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("visualOffset"), OffsetLabel);
         }
 
         private void DrawInteraction()
@@ -197,6 +212,24 @@ namespace RustamKhonoff.UShape.Editor
                 DrawRadius(radii.FindPropertyRelative("y"), TopRight);
                 DrawRadius(radii.FindPropertyRelative("z"), BottomRight);
                 DrawRadius(radii.FindPropertyRelative("w"), BottomLeft);
+            }
+        }
+
+        private void DrawEffects()
+        {
+            DrawSection("Blink");
+            var blink = serializedObject.FindProperty("blink");
+            var enabled = blink.FindPropertyRelative("enabled");
+            EditorGUILayout.PropertyField(enabled);
+            if (enabled.boolValue || enabled.hasMultipleDifferentValues)
+            {
+                EditorGUILayout.PropertyField(blink.FindPropertyRelative("width"));
+                EditorGUILayout.PropertyField(blink.FindPropertyRelative("blur"));
+                EditorGUILayout.PropertyField(blink.FindPropertyRelative("color"));
+                EditorGUILayout.PropertyField(blink.FindPropertyRelative("angle"));
+                EditorGUILayout.PropertyField(blink.FindPropertyRelative("duration"), new GUIContent("Duration (s)"));
+                EditorGUILayout.PropertyField(blink.FindPropertyRelative("interval"), new GUIContent("Pause (s)"));
+                EditorGUILayout.PropertyField(blink.FindPropertyRelative("initialDelay"), new GUIContent("Initial Delay (s)"));
             }
 
             DrawSection("Pointer");

@@ -54,6 +54,8 @@ Shader "RustamKhonoff/UShape"
                 nointerpolation float2 innerInset : TEXCOORD8;
                 nointerpolation float4 borderStroke : TEXCOORD9;
                 nointerpolation float4 outlineStroke : TEXCOORD10;
+                float3 blink : TEXCOORD11; // Signed distance to band center, core half width, falloff.
+                nointerpolation half4 blinkColor : TEXCOORD12;
                 #ifdef UNITY_UI_CLIP_RECT
                 float4 mask : TEXCOORD6;
                 #endif
@@ -62,6 +64,7 @@ Shader "RustamKhonoff/UShape"
 
             sampler2D _StyleTex, _MainTex;
             half4 _Color;
+            float _UShapeBlinkTime;
             int _UIVertexColorAlwaysGammaSpace;
             float4 _ClipRect;
             float _UIMaskSoftnessX, _UIMaskSoftnessY;
@@ -69,7 +72,7 @@ Shader "RustamKhonoff/UShape"
             // Matches StyleWidth and Capacity in PanelAtlas. Unfiltered reads are safe at texel centers.
             float4 style(float slot, float entry)
             {
-                return tex2Dlod(_StyleTex, float4((entry + .5) / 32., (slot + .5) / 64., 0, 0));
+                return tex2Dlod(_StyleTex, float4((entry + .5) / 34., (slot + .5) / 64., 0, 0));
             }
 
             // Express each side in coordinates where the pointer extends along positive Y.
@@ -122,6 +125,37 @@ Shader "RustamKhonoff/UShape"
                 return float4(config.xyz, alpha);
             }
 
+            void animatedBlink(float slot, float2 halfSize, float2 p, float4 pointer,
+                out float3 blink, out half4 blinkColor)
+            {
+                blink = 0;
+                blinkColor = 0;
+                float3 timing = style(slot, 33.).xyz;
+                float elapsed = _UShapeBlinkTime - timing.x;
+                if (elapsed < 0.) return;
+                float phase = fmod(elapsed, timing.y + timing.z);
+                if (phase >= timing.y) return;
+
+                float4 band = style(slot, 31.);
+                float extent = dot(halfSize, abs(band.xy));
+                float low = -extent;
+                float high = extent;
+                uint side = (uint)pointer.x;
+                if (side != 0u)
+                {
+                    float2 tip = float2(pointer.y, sizeOnPointerSide(halfSize, side).y + pointer.w);
+                    // Project the tip and travel direction in the same side coordinates.
+                    float projectedTip = dot(tip, pointOnPointerSide(band.xy, side));
+                    low = min(low, projectedTip);
+                    high = max(high, projectedTip);
+                }
+
+                float tail = band.z + band.w;
+                float center = lerp(low - tail, high + tail, phase / timing.y);
+                blink = float3(dot(p, band.xy) - center, band.zw);
+                blinkColor = style(slot, 32.);
+            }
+
             Varyings vert(Attributes v)
             {
                 Varyings o;
@@ -157,6 +191,12 @@ Shader "RustamKhonoff/UShape"
                 UNITY_BRANCH
                 if ((flags & 16u) != 0u)
                     o.pointer = fitPointer(style(slot, 27.), v.instance.yz, o.radii);
+
+                o.blink = 0;
+                o.blinkColor = 0;
+                UNITY_BRANCH
+                if ((flags & 8192u) != 0u)
+                    animatedBlink(slot, v.instance.yz, v.positionInPanel, o.pointer, o.blink, o.blinkColor);
 
                 o.innerInset = 0;
                 UNITY_BRANCH
@@ -365,6 +405,15 @@ Shader "RustamKhonoff/UShape"
 
                 if (border > 0.)
                     surface += premultiply(samplePaint(i, slot, 1., style(slot, 5.), style(slot, 6.)), border * i.borderStroke.w);
+
+                UNITY_BRANCH
+                if (i.blinkColor.a > 0. && surface.a > 0.)
+                {
+                    float inner = max(0., i.blink.y - aa);
+                    float outer = i.blink.y + i.blink.z;
+                    float mask = 1. - smoothstep(inner, outer, abs(i.blink.x));
+                    surface.rgb = lerp(surface.rgb, i.blinkColor.rgb * surface.a, saturate(i.blinkColor.a) * mask);
+                }
 
                 if (outline > 0.)
                 {

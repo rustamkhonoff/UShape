@@ -17,6 +17,7 @@ namespace RustamKhonoff.UShape
         private const int InnerReachEntry = PointerEntry + 1;
         private const int BorderStrokeEntry = InnerReachEntry + 1;
         private const int OutlineStrokeEntry = BorderStrokeEntry + 1;
+        private const int BlinkEntry = OutlineStrokeEntry + 1;
         private const int PaintCount = 3;
 
         private static readonly List<PanelAtlas> Pages = new List<PanelAtlas>();
@@ -27,6 +28,8 @@ namespace RustamKhonoff.UShape
         private static readonly HashSet<Shape> transitions = new HashSet<Shape>();
         private static readonly List<Shape> advancing = new List<Shape>();
         private static Shader shader;
+        private static readonly int BlinkTimeId = Shader.PropertyToID("_UShapeBlinkTime");
+        private static int blinkClockUsers;
 
         private readonly Stack<int> freeSlots = new Stack<int>(Capacity);
         private readonly Texture2D styles;
@@ -106,9 +109,18 @@ namespace RustamKhonoff.UShape
         public static void CancelStyle(Shape element) => pendingStyles.Remove(element);
         public static void TrackTransition(Shape element) => transitions.Add(element);
         public static void StopTransition(Shape element) => transitions.Remove(element);
+        public static void AcquireBlinkClock()
+        {
+            if (blinkClockUsers++ == 0) UpdateBlinkClock();
+        }
+
+        public static void ReleaseBlinkClock() => blinkClockUsers--;
+
+        private static void UpdateBlinkClock() => Shader.SetGlobalFloat(BlinkTimeId, Time.unscaledTime);
 
         private static void FlushStyles()
         {
+            if (blinkClockUsers > 0) UpdateBlinkClock();
             if (flushingStyles || (pendingStyles.Count == 0 && transitions.Count == 0)) return;
             // Padding changes must reach Graphic before the canvas rebuilds. A dirty callback
             // can schedule another element, so flush a separate set.
@@ -175,6 +187,16 @@ namespace RustamKhonoff.UShape
             // Four bits per stroke: two for pattern, two for motion.
             flags |= EncodeStroke(element.borderWidth, element.borderStroke, row, BorderStrokeEntry) << 5;
             flags |= EncodeStroke(element.outlineWidth, element.outlineStroke, row, OutlineStrokeEntry) << 9;
+            if (element.HasLiveBlink)
+            {
+                flags |= 1 << 13;
+                var blink = element.Blink;
+                float angle = blink.angle * Mathf.Deg2Rad;
+                row.Set(BlinkEntry, new Color(Mathf.Cos(angle), Mathf.Sin(angle), blink.width * .5f, Mathf.Max(0, blink.blur)));
+                row.Set(BlinkEntry + 1, ToWorkingColorSpace(blink.color));
+                row.Set(BlinkEntry + 2, new Color(element.BlinkEpoch + Mathf.Max(0, blink.initialDelay),
+                    Mathf.Max(.01f, blink.duration), Mathf.Max(0, blink.interval), 0));
+            }
 
             int outerCount = WriteShadows(row, OuterShadowStart, element.outerShadow, element.GetExtraShadows(true), false, out _);
             int innerCount = WriteShadows(row, InnerShadowStart, element.innerShadow, element.GetExtraShadows(false), true, out Vector2 innerReach);

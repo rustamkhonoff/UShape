@@ -52,7 +52,6 @@
     top: 0;
     bottom: 0;
     left: 0;
-    width: 33.3333%;
     background-color: var(--shape-selected);
     border-width: 1px;
     border-color: var(--shape-selected-border);

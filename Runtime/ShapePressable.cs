@@ -16,9 +16,9 @@ namespace RustamKhonoff.UShape
     [Serializable]
     public struct ShapePressStyle
     {
-        [Tooltip("Multiplier relative to the original local scale. One keeps the original size.")]
+        [Tooltip("Multiplier relative to the Shape scale. One keeps the original size.")]
         public ShapePressValue<float> scale;
-        [Tooltip("Offset from the original anchored position, in UI units.")]
+        [Tooltip("Additional offset of the drawn Shape, in UI units.")]
         public ShapePressValue<Vector2> offset;
         public ShapePressValue<Color> fillColor;
         public ShapePressValue<float> fillAngle;
@@ -116,8 +116,6 @@ namespace RustamKhonoff.UShape
     {
         [Tooltip("Defaults to the Shape on this GameObject.")]
         public Shape target;
-        [Tooltip("Optional visual root for scale and offset. Defaults to Target's RectTransform.")]
-        public RectTransform visualRoot;
         public ShapePressStyle hovered;
         [Tooltip("Unset fields inherit Hovered.")]
         public ShapePressStyle pressed;
@@ -127,13 +125,11 @@ namespace RustamKhonoff.UShape
         private ShapePressStyle normal;
         private int? pressedPointer;
         private bool inside;
-        private RectTransform animatedRoot;
+        private Shape animatedShape;
         private Coroutine motion;
-        private Vector3 normalScale;
-        private Vector2 normalPosition;
-        private Vector3 goalScale;
-        private Vector2 goalPosition;
-        private bool controlsScale, controlsPosition, restoringTransform;
+        private float currentScale = 1f, goalScale = 1f;
+        private Vector2 currentOffset, goalOffset;
+        private bool restoringTransform;
         private float motionDuration;
         private double finishAt;
 
@@ -206,27 +202,21 @@ namespace RustamKhonoff.UShape
 
         private void ApplyTransform(bool interacting)
         {
-            var root = visualRoot ? visualRoot : target ? target.rectTransform : null;
-            if (animatedRoot && animatedRoot != root) ClearTransform();
-            if (!animatedRoot)
+            if (animatedShape && animatedShape != target) ClearTransform();
+            if (!animatedShape)
             {
-                if (!interacting || !root) return;
-                controlsScale = hovered.scale.enabled || pressed.scale.enabled;
-                controlsPosition = hovered.offset.enabled || pressed.offset.enabled;
-                if (!controlsScale && !controlsPosition) return;
-                animatedRoot = root;
-                normalScale = root.localScale;
-                normalPosition = root.anchoredPosition;
+                if (!interacting || !target) return;
+                if (!hovered.scale.enabled && !pressed.scale.enabled && !hovered.offset.enabled && !pressed.offset.enabled) return;
+                animatedShape = target;
             }
 
             restoringTransform = !interacting;
             bool press = interacting && pressedPointer.HasValue;
             ShapePressStyle.Resolve(hovered.scale, pressed.scale, 1f, interacting, press, out float scale);
-            ShapePressStyle.Resolve(hovered.offset, pressed.offset, Vector2.zero, interacting, press, out Vector2 offset);
-            goalScale = normalScale * Mathf.Max(0f, scale);
-            goalPosition = normalPosition + offset;
-            motionDuration = target ? target.StyleTransitionDuration : 0f;
-            if (motionDuration <= 0f || AtGoal())
+            ShapePressStyle.Resolve(hovered.offset, pressed.offset, Vector2.zero, interacting, press, out goalOffset);
+            goalScale = Mathf.Max(0f, scale);
+            motionDuration = animatedShape.StyleTransitionDuration;
+            if (motionDuration <= 0f || (currentScale.Equals(goalScale) && currentOffset.Equals(goalOffset)))
             {
                 if (motion != null) StopCoroutine(motion);
                 motion = null;
@@ -238,19 +228,16 @@ namespace RustamKhonoff.UShape
             if (motion == null) motion = StartCoroutine(AnimateTransform());
         }
 
-        private bool AtGoal() =>
-            (!controlsScale || animatedRoot.localScale == goalScale)
-            && (!controlsPosition || animatedRoot.anchoredPosition == goalPosition);
-
         private IEnumerator AnimateTransform()
         {
-            while (animatedRoot)
+            while (animatedShape)
             {
                 yield return null;
-                if (!animatedRoot || Time.unscaledTimeAsDouble >= finishAt) break;
+                if (!animatedShape || Time.unscaledTimeAsDouble >= finishAt) break;
                 float step = 1f - Mathf.Exp(-4.60517f * Time.unscaledDeltaTime / motionDuration);
-                if (controlsScale) animatedRoot.localScale = Vector3.LerpUnclamped(animatedRoot.localScale, goalScale, step);
-                if (controlsPosition) animatedRoot.anchoredPosition = Vector2.LerpUnclamped(animatedRoot.anchoredPosition, goalPosition, step);
+                currentScale = Mathf.LerpUnclamped(currentScale, goalScale, step);
+                currentOffset = Vector2.LerpUnclamped(currentOffset, goalOffset, step);
+                animatedShape.SetPressTransform(currentScale, currentOffset);
             }
             motion = null;
             ApplyGoal();
@@ -258,22 +245,20 @@ namespace RustamKhonoff.UShape
 
         private void ApplyGoal()
         {
-            if (!animatedRoot) return;
-            if (controlsScale) animatedRoot.localScale = goalScale;
-            if (controlsPosition) animatedRoot.anchoredPosition = goalPosition;
-            if (restoringTransform) animatedRoot = null;
+            currentScale = goalScale;
+            currentOffset = goalOffset;
+            if (animatedShape) animatedShape.SetPressTransform(currentScale, currentOffset);
+            if (restoringTransform || !animatedShape) animatedShape = null;
         }
 
         private void ClearTransform()
         {
             if (motion != null) StopCoroutine(motion);
             motion = null;
-            if (animatedRoot)
-            {
-                if (controlsScale) animatedRoot.localScale = normalScale;
-                if (controlsPosition) animatedRoot.anchoredPosition = normalPosition;
-            }
-            animatedRoot = null;
+            if (animatedShape) animatedShape.SetPressTransform(1f, Vector2.zero);
+            animatedShape = null;
+            currentScale = 1f;
+            currentOffset = Vector2.zero;
         }
 
         private void Restore()
