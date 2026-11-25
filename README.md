@@ -7,7 +7,7 @@
 Требуется Unity 2022.3 LTS или новее, uGUI и графический API с поддержкой Shader Model 3.5. В Package Manager выберите **Add package from git URL** и вставьте адрес:
 
 ```text
-https://github.com/rustamkhonoff/ushape.git
+https://github.com/rustamkhonoff/UShape.git
 ```
 
 Для локального подключения можно скопировать пакет в `Packages/com.rustamkhonoff.ushape`. Создайте объект через **GameObject → UI → Shape** или откройте один из примеров через то же меню. Инспектор работает без Odin.
