@@ -95,7 +95,7 @@ shape.OutlineWidth = 2;
 
 ## Transform
 
-Вкладка **Transform** у Shape показывает **Scale** и **Offset**. Они масштабируют и смещают только отрисовку Shape, включая его рамку, указатель и тени. В коде доступны `shape.Scale` и `shape.Offset`. RectTransform, layout, область нажатия и дочерние элементы остаются на месте.
+На вкладке **Transform** поле **Rect Position** меняет `RectTransform.anchoredPosition`, поэтому вместе с Shape перемещаются его дочерние элементы и область нажатия. **Visual Scale** и **Visual Offset** меняют отрисовку Shape, включая рамку, указатель и тени. В коде доступны `shape.RectPosition`, `shape.Scale` и `shape.VisualOffset`.
 
 ## Реакция на нажатие
 
@@ -103,4 +103,4 @@ shape.OutlineWidth = 2;
 
 В Hovered и Pressed включите Enabled только у нужных полей. Например, в **Pressed → Outer Shadow Offset** задайте **(0, −1)**. При отпускании внутри возвращается Hovered, при выходе — исходный стиль. Для плавной реакции задайте целевому Shape **Style Transition (s)**, например **0.12**.
 
-Для анимации плашки включите **Pressed → Scale** (например, **0.96**) и **Offset** (например, **(0, −2)**). Shape Pressable временно умножает базовый масштаб и добавляет сдвиг. Используется длительность перехода целевого Shape.
+В Hovered и Pressed можно независимо включить **Rect Offset** и **Visual Offset**. Оба сдвига можно применять одновременно. Например, **Pressed → Rect Offset** со значением **(0, −2)** сдвигает кнопку вместе с текстом, а **Visual Offset** добавляет сдвиг к отрисовке самой плашки. Оба сдвига и **Scale** используют один **Style Transition (s)** целевого Shape и возвращаются к базовым значениям после взаимодействия. Если позицию задаёт Layout Group, назначьте в Target внутренний Shape, а внешний контейнер оставьте под управлением layout.

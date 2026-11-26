@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.Serialization;
 using UnityEngine.UI;
 
 namespace RustamKhonoff.UShape
@@ -18,8 +19,10 @@ namespace RustamKhonoff.UShape
     {
         [Tooltip("Multiplier relative to the Shape scale. One keeps the original size.")]
         public ShapePressValue<float> scale;
-        [Tooltip("Additional offset of the drawn Shape, in UI units.")]
-        public ShapePressValue<Vector2> offset;
+        [FormerlySerializedAs("offset"), Tooltip("Additional offset of the drawn Shape, in UI units.")]
+        public ShapePressValue<Vector2> visualOffset;
+        [Tooltip("Additional anchored position offset of the Shape's RectTransform and its children.")]
+        public ShapePressValue<Vector2> rectOffset;
         public ShapePressValue<Color> fillColor;
         public ShapePressValue<float> fillAngle;
         public ShapePressValue<float> fillOffset;
@@ -128,7 +131,9 @@ namespace RustamKhonoff.UShape
         private Shape animatedShape;
         private Coroutine motion;
         private float currentScale = 1f, goalScale = 1f;
-        private Vector2 currentOffset, goalOffset;
+        private Vector2 currentVisualOffset, goalVisualOffset;
+        private Vector2 currentRectOffset, goalRectOffset;
+        private Vector2 rectBasePosition, lastRectPosition;
         private bool restoringTransform;
         private float motionDuration;
         private double finishAt;
@@ -202,21 +207,26 @@ namespace RustamKhonoff.UShape
 
         private void ApplyTransform(bool interacting)
         {
-            if (animatedShape && animatedShape != target) ClearTransform();
+            if (!ReferenceEquals(animatedShape, null) && (!animatedShape || animatedShape != target))
+                ClearTransform();
             if (!animatedShape)
             {
                 if (!interacting || !target) return;
-                if (!hovered.scale.enabled && !pressed.scale.enabled && !hovered.offset.enabled && !pressed.offset.enabled) return;
+                if (!hovered.scale.enabled && !pressed.scale.enabled &&
+                    !hovered.visualOffset.enabled && !pressed.visualOffset.enabled &&
+                    !hovered.rectOffset.enabled && !pressed.rectOffset.enabled) return;
                 animatedShape = target;
             }
 
             restoringTransform = !interacting;
             bool press = interacting && pressedPointer.HasValue;
             ShapePressStyle.Resolve(hovered.scale, pressed.scale, 1f, interacting, press, out float scale);
-            ShapePressStyle.Resolve(hovered.offset, pressed.offset, Vector2.zero, interacting, press, out goalOffset);
+            ShapePressStyle.Resolve(hovered.visualOffset, pressed.visualOffset, Vector2.zero, interacting, press, out goalVisualOffset);
+            ShapePressStyle.Resolve(hovered.rectOffset, pressed.rectOffset, Vector2.zero, interacting, press, out goalRectOffset);
             goalScale = Mathf.Max(0f, scale);
             motionDuration = animatedShape.StyleTransitionDuration;
-            if (motionDuration <= 0f || (currentScale.Equals(goalScale) && currentOffset.Equals(goalOffset)))
+            if (motionDuration <= 0f || (currentScale.Equals(goalScale) &&
+                currentVisualOffset.Equals(goalVisualOffset) && currentRectOffset.Equals(goalRectOffset)))
             {
                 if (motion != null) StopCoroutine(motion);
                 motion = null;
@@ -236,8 +246,9 @@ namespace RustamKhonoff.UShape
                 if (!animatedShape || Time.unscaledTimeAsDouble >= finishAt) break;
                 float step = 1f - Mathf.Exp(-4.60517f * Time.unscaledDeltaTime / motionDuration);
                 currentScale = Mathf.LerpUnclamped(currentScale, goalScale, step);
-                currentOffset = Vector2.LerpUnclamped(currentOffset, goalOffset, step);
-                animatedShape.SetPressTransform(currentScale, currentOffset);
+                currentVisualOffset = Vector2.LerpUnclamped(currentVisualOffset, goalVisualOffset, step);
+                animatedShape.SetPressTransform(currentScale, currentVisualOffset);
+                ApplyRectOffset(Vector2.LerpUnclamped(currentRectOffset, goalRectOffset, step));
             }
             motion = null;
             ApplyGoal();
@@ -245,20 +256,42 @@ namespace RustamKhonoff.UShape
 
         private void ApplyGoal()
         {
+            if (!animatedShape)
+            {
+                ClearTransform();
+                return;
+            }
             currentScale = goalScale;
-            currentOffset = goalOffset;
-            if (animatedShape) animatedShape.SetPressTransform(currentScale, currentOffset);
-            if (restoringTransform || !animatedShape) animatedShape = null;
+            currentVisualOffset = goalVisualOffset;
+            animatedShape.SetPressTransform(currentScale, currentVisualOffset);
+            ApplyRectOffset(goalRectOffset);
+            if (restoringTransform) animatedShape = null;
+        }
+
+        private void ApplyRectOffset(Vector2 offset)
+        {
+            if (currentRectOffset.Equals(offset)) return;
+            var position = animatedShape.RectPosition;
+            // Keep an externally repositioned RectTransform as the new resting position.
+            if (currentRectOffset.Equals(Vector2.zero) || !position.Equals(lastRectPosition))
+                rectBasePosition = position;
+            currentRectOffset = offset;
+            lastRectPosition = rectBasePosition + offset;
+            if (!position.Equals(lastRectPosition)) animatedShape.RectPosition = lastRectPosition;
         }
 
         private void ClearTransform()
         {
             if (motion != null) StopCoroutine(motion);
             motion = null;
-            if (animatedShape) animatedShape.SetPressTransform(1f, Vector2.zero);
+            if (animatedShape)
+            {
+                animatedShape.SetPressTransform(1f, Vector2.zero);
+                ApplyRectOffset(Vector2.zero);
+            }
             animatedShape = null;
             currentScale = 1f;
-            currentOffset = Vector2.zero;
+            currentVisualOffset = currentRectOffset = Vector2.zero;
         }
 
         private void Restore()

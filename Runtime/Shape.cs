@@ -73,8 +73,15 @@ namespace RustamKhonoff.UShape
             set { if (StyleValue.Set(ref visualScale, value)) SetVerticesDirty(); }
         }
 
+        /// <summary>Anchored position of the UI object and its hierarchy.</summary>
+        public Vector2 RectPosition
+        {
+            get => rectTransform.anchoredPosition;
+            set => rectTransform.anchoredPosition = value;
+        }
+
         /// <summary>Offset of the drawn shape, in local UI units.</summary>
-        public Vector2 Offset
+        public Vector2 VisualOffset
         {
             get => visualOffset;
             set { if (StyleValue.Set(ref visualOffset, value)) SetVerticesDirty(); }

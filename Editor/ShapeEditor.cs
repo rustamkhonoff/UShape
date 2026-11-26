@@ -25,12 +25,20 @@ namespace RustamKhonoff.UShape.Editor
         private static readonly GUIContent BottomLeft = new GUIContent("Bottom Left");
         private int group;
         private bool showInteraction;
-        private static readonly GUIContent ScaleLabel = new GUIContent("Scale", "Scale of the drawn shape around its center.");
-        private static readonly GUIContent OffsetLabel = new GUIContent("Offset", "Offset of the drawn shape, in local UI units.");
+        private SerializedObject rects;
+        private static readonly GUIContent RectPositionLabel = new GUIContent("Rect Position", "Anchored position of the RectTransform.");
+        private static readonly GUIContent ScaleLabel = new GUIContent("Visual Scale", "Scale of the drawn shape around its center.");
+        private static readonly GUIContent OffsetLabel = new GUIContent("Visual Offset", "Offset of the drawn shape, in local UI units.");
 
         private void OnEnable()
         {
             group = Mathf.Clamp(SessionState.GetInt(SelectedGroupKey, 0), 0, Groups.Length - 1);
+        }
+
+        private void OnDisable()
+        {
+            rects?.Dispose();
+            rects = null;
         }
 
         private void SetGroup(int index)
@@ -161,6 +169,11 @@ namespace RustamKhonoff.UShape.Editor
 
         private void DrawTransform()
         {
+            rects ??= new SerializedObject(System.Array.ConvertAll(targets, item => ((Shape)item).rectTransform));
+            rects.Update();
+            EditorGUILayout.PropertyField(rects.FindProperty("m_AnchoredPosition"), RectPositionLabel);
+            rects.ApplyModifiedProperties();
+
             EditorGUILayout.PropertyField(serializedObject.FindProperty("visualScale"), ScaleLabel);
             EditorGUILayout.PropertyField(serializedObject.FindProperty("visualOffset"), OffsetLabel);
         }
