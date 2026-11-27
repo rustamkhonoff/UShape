@@ -133,7 +133,8 @@ namespace RustamKhonoff.UShape
         private float currentScale = 1f, goalScale = 1f;
         private Vector2 currentVisualOffset, goalVisualOffset;
         private Vector2 currentRectOffset, goalRectOffset;
-        private Vector2 rectBasePosition, lastRectPosition;
+        private Vector2 rectBasePosition;
+        private bool hasRectBase;
         private bool restoringTransform;
         private float motionDuration;
         private double finishAt;
@@ -223,6 +224,13 @@ namespace RustamKhonoff.UShape
             ShapePressStyle.Resolve(hovered.scale, pressed.scale, 1f, interacting, press, out float scale);
             ShapePressStyle.Resolve(hovered.visualOffset, pressed.visualOffset, Vector2.zero, interacting, press, out goalVisualOffset);
             ShapePressStyle.Resolve(hovered.rectOffset, pressed.rectOffset, Vector2.zero, interacting, press, out goalRectOffset);
+            if (!hasRectBase && !goalRectOffset.Equals(Vector2.zero))
+            {
+                // Snapshot before the coroutine yields. Layout refreshes during
+                // the transition must not become the position we restore to.
+                rectBasePosition = animatedShape.RectPosition;
+                hasRectBase = true;
+            }
             goalScale = Mathf.Max(0f, scale);
             motionDuration = animatedShape.StyleTransitionDuration;
             if (motionDuration <= 0f || (currentScale.Equals(goalScale) &&
@@ -248,7 +256,8 @@ namespace RustamKhonoff.UShape
                 currentScale = Mathf.LerpUnclamped(currentScale, goalScale, step);
                 currentVisualOffset = Vector2.LerpUnclamped(currentVisualOffset, goalVisualOffset, step);
                 animatedShape.SetPressTransform(currentScale, currentVisualOffset);
-                ApplyRectOffset(Vector2.LerpUnclamped(currentRectOffset, goalRectOffset, step));
+                if (hasRectBase)
+                    ApplyRectOffset(Vector2.LerpUnclamped(currentRectOffset, goalRectOffset, step));
             }
             motion = null;
             ApplyGoal();
@@ -264,20 +273,18 @@ namespace RustamKhonoff.UShape
             currentScale = goalScale;
             currentVisualOffset = goalVisualOffset;
             animatedShape.SetPressTransform(currentScale, currentVisualOffset);
-            ApplyRectOffset(goalRectOffset);
+            if (hasRectBase)
+            {
+                ApplyRectOffset(goalRectOffset);
+                hasRectBase = !goalRectOffset.Equals(Vector2.zero);
+            }
             if (restoringTransform) animatedShape = null;
         }
 
         private void ApplyRectOffset(Vector2 offset)
         {
-            if (currentRectOffset.Equals(offset)) return;
-            var position = animatedShape.RectPosition;
-            // Keep an externally repositioned RectTransform as the new resting position.
-            if (currentRectOffset.Equals(Vector2.zero) || !position.Equals(lastRectPosition))
-                rectBasePosition = position;
             currentRectOffset = offset;
-            lastRectPosition = rectBasePosition + offset;
-            if (!position.Equals(lastRectPosition)) animatedShape.RectPosition = lastRectPosition;
+            animatedShape.RectPosition = rectBasePosition + offset;
         }
 
         private void ClearTransform()
@@ -287,8 +294,9 @@ namespace RustamKhonoff.UShape
             if (animatedShape)
             {
                 animatedShape.SetPressTransform(1f, Vector2.zero);
-                ApplyRectOffset(Vector2.zero);
+                if (hasRectBase) ApplyRectOffset(Vector2.zero);
             }
+            hasRectBase = false;
             animatedShape = null;
             currentScale = 1f;
             currentVisualOffset = currentRectOffset = Vector2.zero;
